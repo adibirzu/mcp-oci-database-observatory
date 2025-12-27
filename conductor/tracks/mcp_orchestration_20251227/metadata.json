@@ -1,0 +1,8 @@
+{
+  "track_id": "mcp_orchestration_20251227",
+  "type": "feature",
+  "status": "new",
+  "created_at": "2025-12-27T00:00:00Z",
+  "updated_at": "2025-12-27T00:00:00Z",
+  "description": "Implement MCP Client and Coordinator Orchestration: Finalize the core agentic loop where the coordinator agent uses the MCP client to discover tools, route queries to specialized agents, and execute database operations via MCP servers."
+}

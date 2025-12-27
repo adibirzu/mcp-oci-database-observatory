@@ -1,0 +1,56 @@
+# Track Plan: MCP Client & Coordinator Orchestration
+
+## Phase 1: Foundation - MCP Client & Configuration
+
+- [ ] Task: Create MCP Configuration Manager
+    - [ ] Subtask: Write tests for loading `config/mcp-servers.json` and validating schema.
+    - [ ] Subtask: Implement `McpServerConfig` and configuration loading logic in `src/core/config.py` or `src/mcp/config.py`.
+    - [ ] Subtask: Refactor to ensure type safety.
+
+- [ ] Task: Implement MCP Client with Stdio Transport
+    - [ ] Subtask: Write tests mocking `subprocess` to verify Stdio communication (JSON-RPC).
+    - [ ] Subtask: Implement `McpClient` in `src/mcp/client.py` using the Python MCP SDK (or custom implementation if SDK is not yet stable) to connect to a server process.
+    - [ ] Subtask: Ensure `initialize` handshake works correctly.
+
+- [ ] Task: Implement Tool Discovery & Registry
+    - [ ] Subtask: Write tests for fetching tools list from a mock MCP server and converting to LangChain/LLM format.
+    - [ ] Subtask: Implement `list_tools` method in `McpClient`.
+    - [ ] Subtask: Create `ToolRegistry` in `src/mcp/registry.py` to aggregate tools from multiple clients.
+
+- [ ] Task: Conductor - User Manual Verification 'Phase 1: Foundation - MCP Client & Configuration' (Protocol in workflow.md)
+
+## Phase 2: Coordinator Agent Implementation
+
+- [ ] Task: Initialize LangGraph Coordinator
+    - [ ] Subtask: Write tests for the basic graph structure (nodes: `input`, `agent`, `action`, `output`).
+    - [ ] Subtask: Implement the basic StateGraph in `src/agents/coordinator/graph.py`.
+
+- [ ] Task: Bind MCP Tools to Coordinator LLM
+    - [ ] Subtask: Write tests to verify that tools from `ToolRegistry` are correctly passed to the LLM's `bind_tools` method.
+    - [ ] Subtask: Update coordinator to load tools from registry at startup.
+
+- [ ] Task: Implement Tool Execution Node
+    - [ ] Subtask: Write tests for the `action` node: receiving a tool call, executing it via `McpClient`, and returning output.
+    - [ ] Subtask: Implement `call_tool` method in `McpClient` and connect it to the graph's execution node.
+
+- [ ] Task: Conductor - User Manual Verification 'Phase 2: Coordinator Agent Implementation' (Protocol in workflow.md)
+
+## Phase 3: Database MCP Server Integration
+
+- [ ] Task: Configure & Test Oracle (SQLcl) MCP Connection
+    - [ ] Subtask: Update `config/mcp-servers.json` with actual paths to SQLcl MCP.
+    - [ ] Subtask: Write an integration test that starts the real SQLcl MCP server and pings it (or lists tools).
+
+- [ ] Task: Configure & Test MySQL/Postgres MCP Connections
+    - [ ] Subtask: Update `config/mcp-servers.json` with paths to the other MCP servers in `/Users/abirzu/dev/MCP`.
+    - [ ] Subtask: Write integration tests for connectivity.
+
+- [ ] Task: Conductor - User Manual Verification 'Phase 3: Database MCP Server Integration' (Protocol in workflow.md)
+
+## Phase 4: End-to-End Orchestration & Verification
+
+- [ ] Task: End-to-End Flow: Natural Language to SQL
+    - [ ] Subtask: Write an E2E test: "Show me the tables in the users schema" -> Agent -> MCP Tool (SQLcl) -> DB -> Result -> Agent -> "Here are the tables...".
+    - [ ] Subtask: Refactor and polish the prompt engineering for the Coordinator to ensure correct tool selection.
+
+- [ ] Task: Conductor - User Manual Verification 'Phase 4: End-to-End Orchestration & Verification' (Protocol in workflow.md)
