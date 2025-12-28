@@ -49,7 +49,7 @@
 
 ## Phase 4: End-to-End Orchestration & Verification
 
-- [x] Task: End-to-End Flow: Natural Language to SQL [pending commit]
+- [x] Task: End-to-End Flow: Natural Language to SQL [4d81456]
     - [x] Subtask: Write an E2E test: "Show me the tables in the users schema" -> Agent -> MCP Tool (SQLcl) -> DB -> Result -> Agent -> "Here are the tables...".
     - [x] Subtask: Refactor and polish the prompt engineering for the Coordinator to ensure correct tool selection.
 
