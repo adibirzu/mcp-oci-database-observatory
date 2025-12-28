@@ -1,0 +1,65 @@
+{
+  "servers": [
+    {
+      "id": "oci-opsi",
+      "name": "OCI Operations Insights",
+      "transport": "http",
+      "url": "${OPSI_HTTP_URL}",
+      "description": "Database monitoring, cache tools, OPSI analytics"
+    },
+    {
+      "id": "oci-logan",
+      "name": "OCI Logging Analytics",
+      "transport": "http",
+      "url": "${LOGAN_HTTP_URL}",
+      "description": "Log search, MITRE analysis, security events"
+    },
+    {
+      "id": "oci-mcp",
+      "name": "OCI Unified MCP",
+      "transport": "http",
+      "url": "${OCI_MCP_HTTP_URL}",
+      "description": "Compute, network, inventory, cost, database, security"
+    },
+    {
+      "id": "mysql-mcp",
+      "name": "MySQL MCP Server",
+      "transport": "http",
+      "url": "${MYSQL_MCP_URL}",
+      "description": "MySQL database connections and SQL execution"
+    },
+    {
+      "id": "postgres-mcp",
+      "name": "PostgreSQL MCP Server",
+      "transport": "http",
+      "url": "${POSTGRES_MCP_URL}",
+      "description": "PostgreSQL database connections and SQL execution"
+    },
+    {
+      "id": "sqlcl",
+      "name": "Oracle SQLcl",
+      "transport": "stdio",
+      "command": "${SQLCL_PATH}",
+      "args": ["-mcp"],
+      "description": "Oracle database connections, SQL execution"
+    }
+  ],
+  "tool_ttl_overrides": {
+    "static": {
+      "tools": ["list_oci_profiles", "list_cached_regions", "list_parsers"],
+      "ttl_seconds": 3600
+    },
+    "stable": {
+      "tools": ["list_compartments", "list_entities", "list_log_sources", "get_profile_info"],
+      "ttl_seconds": 1800
+    },
+    "infrastructure": {
+      "tools": ["get_fleet_summary", "list_autonomous_databases", "list-connections", "schema-information"],
+      "ttl_seconds": 600
+    },
+    "realtime": {
+      "tools": ["ping", "health", "run-sql", "connect", "disconnect"],
+      "ttl_seconds": 0
+    }
+  }
+}

@@ -2,12 +2,12 @@
 
 ## Phase 1: Foundation - MCP Client & Configuration
 
-- [ ] Task: Create MCP Configuration Manager
+- [x] Task: Create MCP Configuration Manager [de382a4]
     - [ ] Subtask: Write tests for loading `config/mcp-servers.json` and validating schema.
     - [ ] Subtask: Implement `McpServerConfig` and configuration loading logic in `src/core/config.py` or `src/mcp/config.py`.
     - [ ] Subtask: Refactor to ensure type safety.
 
-- [ ] Task: Implement MCP Client with Stdio Transport
+- [~] Task: Implement MCP Client with Stdio Transport
     - [ ] Subtask: Write tests mocking `subprocess` to verify Stdio communication (JSON-RPC).
     - [ ] Subtask: Implement `McpClient` in `src/mcp/client.py` using the Python MCP SDK (or custom implementation if SDK is not yet stable) to connect to a server process.
     - [ ] Subtask: Ensure `initialize` handshake works correctly.
