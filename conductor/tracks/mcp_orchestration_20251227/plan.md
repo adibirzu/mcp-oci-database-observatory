@@ -21,9 +21,9 @@
 
 ## Phase 2: Coordinator Agent Implementation
 
-- [ ] Task: Initialize LangGraph Coordinator
-    - [ ] Subtask: Write tests for the basic graph structure (nodes: `input`, `agent`, `action`, `output`).
-    - [ ] Subtask: Implement the basic StateGraph in `src/agents/coordinator/graph.py`.
+- [x] Task: Initialize LangGraph Coordinator [db1f90c]
+    - [x] Subtask: Write tests for the basic graph structure (nodes: `input`, `agent`, `action`, `output`).
+    - [x] Subtask: Implement the basic StateGraph in `src/agents/coordinator/graph.py`.
 
 - [ ] Task: Bind MCP Tools to Coordinator LLM
     - [ ] Subtask: Write tests to verify that tools from `ToolRegistry` are correctly passed to the LLM's `bind_tools` method.

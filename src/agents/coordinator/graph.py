@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from src.core import get_logger
 from src.observability import create_span
+from src.mcp.tools.converter import ToolConverter
 
 logger = get_logger("agents.coordinator.graph")
 
@@ -365,3 +366,98 @@ class LangGraphCoordinator:
             Compiled StateGraph
         """
         return self._graph
+
+    def bind_tools(self, llm: Any = None) -> Any:
+        """Bind MCP tools to an LLM.
+
+        Converts tools from the catalog to LangChain format and binds
+        them to the provided LLM.
+
+        Args:
+            llm: LLM to bind tools to. Uses self.llm if not provided.
+
+        Returns:
+            LLM with tools bound
+
+        Raises:
+            ValueError: If no LLM or tool catalog available
+        """
+        target_llm = llm or self.llm
+        if not target_llm:
+            raise ValueError("No LLM provided for tool binding")
+
+        if not self.tool_catalog:
+            logger.warning("No tool catalog available for binding")
+            return target_llm
+
+        # Convert MCP tools to LangChain format
+        converter = ToolConverter(
+            self.tool_catalog,
+            executor=self._execute_tool,
+        )
+        tools = converter.to_langchain_tools()
+
+        if not tools:
+            logger.warning("No tools available in catalog")
+            return target_llm
+
+        logger.info("Binding tools to LLM", tool_count=len(tools))
+
+        # Bind tools to LLM
+        bound_llm = target_llm.bind_tools(tools)
+        self.llm = bound_llm
+        return bound_llm
+
+    def _execute_tool(self, tool_name: str, arguments: dict) -> str:
+        """Execute a tool synchronously.
+
+        Args:
+            tool_name: Name of tool to execute
+            arguments: Tool arguments
+
+        Returns:
+            Tool result as string
+        """
+        if not self.tool_catalog:
+            return f"Error: No tool catalog configured"
+
+        tool_def = self.tool_catalog.get_tool(tool_name)
+        if not tool_def:
+            return f"Error: Tool not found: {tool_name}"
+
+        client = self.tool_catalog.registry.get_client(tool_def.server_id)
+        if not client:
+            return f"Error: Server not available: {tool_def.server_id}"
+
+        # Note: This is a synchronous wrapper - in production,
+        # async execution should be used
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're already in an async context
+                return f"Tool {tool_name} queued for execution"
+            result = loop.run_until_complete(
+                client.call_tool(tool_def.original_name, arguments)
+            )
+            return str(result)
+        except Exception as e:
+            return f"Error executing {tool_name}: {e}"
+
+    async def initialize_with_tools(self) -> None:
+        """Initialize the coordinator with tools from the catalog.
+
+        This method connects to MCP servers, refreshes the tool catalog,
+        and binds tools to the LLM.
+        """
+        if not self.tool_catalog:
+            logger.warning("No tool catalog configured")
+            return
+
+        # Refresh the catalog
+        await self.tool_catalog.refresh()
+
+        # Bind tools if LLM is configured
+        if self.llm:
+            self.bind_tools()

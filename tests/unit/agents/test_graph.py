@@ -374,3 +374,110 @@ class TestToolBindingFlow:
         # Should have called LLM at least twice
         assert mock_llm.invoke.call_count >= 1
         assert "response" in result
+
+
+class TestBindTools:
+    """Tests for bind_tools method."""
+
+    def test_bind_tools_no_llm_raises(self):
+        """Test that bind_tools raises without LLM."""
+        coordinator = LangGraphCoordinator()
+
+        with pytest.raises(ValueError, match="No LLM provided"):
+            coordinator.bind_tools()
+
+    def test_bind_tools_no_catalog_returns_llm(self):
+        """Test bind_tools without catalog returns LLM unchanged."""
+        mock_llm = MagicMock()
+        coordinator = LangGraphCoordinator(llm=mock_llm)
+
+        result = coordinator.bind_tools()
+
+        assert result is mock_llm
+
+    def test_bind_tools_with_catalog(self):
+        """Test bind_tools with catalog binds tools to LLM."""
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+
+        mock_catalog = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.name = "test__tool"
+        mock_tool.description = "Test tool"
+        mock_tool.parameters = {}
+        mock_tool.original_name = "tool"
+        mock_catalog.list_tools.return_value = [mock_tool]
+
+        coordinator = LangGraphCoordinator(
+            llm=mock_llm,
+            tool_catalog=mock_catalog,
+        )
+
+        result = coordinator.bind_tools()
+
+        mock_llm.bind_tools.assert_called_once()
+        assert result is mock_llm
+
+    def test_bind_tools_with_provided_llm(self):
+        """Test bind_tools with explicitly provided LLM."""
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+
+        mock_catalog = MagicMock()
+        mock_catalog.list_tools.return_value = []
+
+        coordinator = LangGraphCoordinator(tool_catalog=mock_catalog)
+
+        result = coordinator.bind_tools(llm=mock_llm)
+
+        # Should return provided LLM (no tools to bind)
+        assert result is mock_llm
+
+
+class TestInitializeWithTools:
+    """Tests for initialize_with_tools method."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_without_catalog(self):
+        """Test initialize without catalog does nothing."""
+        coordinator = LangGraphCoordinator()
+
+        # Should not raise
+        await coordinator.initialize_with_tools()
+
+    @pytest.mark.asyncio
+    async def test_initialize_refreshes_catalog(self):
+        """Test initialize refreshes the tool catalog."""
+        mock_catalog = MagicMock()
+        mock_catalog.refresh = AsyncMock()
+        mock_catalog.list_tools.return_value = []
+
+        coordinator = LangGraphCoordinator(tool_catalog=mock_catalog)
+
+        await coordinator.initialize_with_tools()
+
+        mock_catalog.refresh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_initialize_binds_tools(self):
+        """Test initialize binds tools when LLM is configured."""
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+
+        mock_catalog = MagicMock()
+        mock_catalog.refresh = AsyncMock()
+        mock_tool = MagicMock()
+        mock_tool.name = "test__tool"
+        mock_tool.description = "Test"
+        mock_tool.parameters = {}
+        mock_tool.original_name = "tool"
+        mock_catalog.list_tools.return_value = [mock_tool]
+
+        coordinator = LangGraphCoordinator(
+            llm=mock_llm,
+            tool_catalog=mock_catalog,
+        )
+
+        await coordinator.initialize_with_tools()
+
+        mock_llm.bind_tools.assert_called_once()
