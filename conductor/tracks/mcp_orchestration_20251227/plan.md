@@ -37,9 +37,9 @@
 
 ## Phase 3: Database MCP Server Integration
 
-- [ ] Task: Configure & Test Oracle (SQLcl) MCP Connection
-    - [ ] Subtask: Update `config/mcp-servers.json` with actual paths to SQLcl MCP.
-    - [ ] Subtask: Write an integration test that starts the real SQLcl MCP server and pings it (or lists tools).
+- [x] Task: Configure & Test Oracle (SQLcl) MCP Connection [029283c]
+    - [x] Subtask: Update `config/mcp-servers.json` with actual paths to SQLcl MCP.
+    - [x] Subtask: Write an integration test that starts the real SQLcl MCP server and pings it (or lists tools).
 
 - [ ] Task: Configure & Test MySQL/Postgres MCP Connections
     - [ ] Subtask: Update `config/mcp-servers.json` with paths to the other MCP servers in `/Users/abirzu/dev/MCP`.
@@ -49,8 +49,8 @@
 
 ## Phase 4: End-to-End Orchestration & Verification
 
-- [ ] Task: End-to-End Flow: Natural Language to SQL
-    - [ ] Subtask: Write an E2E test: "Show me the tables in the users schema" -> Agent -> MCP Tool (SQLcl) -> DB -> Result -> Agent -> "Here are the tables...".
-    - [ ] Subtask: Refactor and polish the prompt engineering for the Coordinator to ensure correct tool selection.
+- [x] Task: End-to-End Flow: Natural Language to SQL [pending commit]
+    - [x] Subtask: Write an E2E test: "Show me the tables in the users schema" -> Agent -> MCP Tool (SQLcl) -> DB -> Result -> Agent -> "Here are the tables...".
+    - [x] Subtask: Refactor and polish the prompt engineering for the Coordinator to ensure correct tool selection.
 
 - [ ] Task: Conductor - User Manual Verification 'Phase 4: End-to-End Orchestration & Verification' (Protocol in workflow.md)
