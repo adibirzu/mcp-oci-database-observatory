@@ -41,9 +41,9 @@
     - [x] Subtask: Update `config/mcp-servers.json` with actual paths to SQLcl MCP.
     - [x] Subtask: Write an integration test that starts the real SQLcl MCP server and pings it (or lists tools).
 
-- [ ] Task: Configure & Test MySQL/Postgres MCP Connections
-    - [ ] Subtask: Update `config/mcp-servers.json` with paths to the other MCP servers in `/Users/abirzu/dev/MCP`.
-    - [ ] Subtask: Write integration tests for connectivity.
+- [x] Task: Configure & Test MySQL/Postgres MCP Connections [pending commit]
+    - [x] Subtask: Update `config/mcp-servers.json` with paths to the other MCP servers in `/Users/abirzu/dev/MCP`.
+    - [x] Subtask: Write integration tests for connectivity (tests skip when servers unavailable).
 
 - [ ] Task: Conductor - User Manual Verification 'Phase 3: Database MCP Server Integration' (Protocol in workflow.md)
 
