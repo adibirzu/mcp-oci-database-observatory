@@ -276,6 +276,56 @@ oci-database-observatory/
 
 ---
 
+## LangGraph Coordinator
+
+### StateGraph Architecture
+
+The coordinator uses LangGraph's StateGraph for stateful multi-agent orchestration:
+
+```
+input -> agent -> (action -> agent)* -> output
+          │            │
+          └──── tool calls? ────┘
+```
+
+### Key Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| `CoordinatorState` | `graph.py` | Immutable state with messages, tool calls |
+| `LangGraphCoordinator` | `graph.py` | StateGraph with checkpointing |
+| `ToolConverter` | `tools/converter.py` | MCP to LangChain tool format |
+| `ToolExecutor` | `executor/executor.py` | Direct MCP tool execution |
+
+### Usage
+
+```python
+from src.agents.coordinator.graph import LangGraphCoordinator
+from src.mcp.registry.catalog import ToolCatalog
+
+# Initialize with LLM and tool catalog
+coordinator = LangGraphCoordinator(
+    llm=claude_llm,
+    tool_catalog=catalog,
+    max_iterations=10,
+)
+
+# Load tools from MCP servers
+await coordinator.initialize_with_tools()
+
+# Process queries
+result = await coordinator.invoke("What tables are in the users schema?")
+```
+
+### Nodes
+
+- **input**: Prepares state for processing
+- **agent**: LLM reasoning with tool calling
+- **action**: MCP tool execution via ToolExecutor
+- **output**: Final response preparation
+
+---
+
 ## Agent System
 
 ### Agent Types
@@ -375,3 +425,56 @@ provider = await router.select_provider(
 2. Add to `src/llm/router/router.py`
 3. Update `config/llm-routing.yaml`
 4. Add environment variables to `.env.local`
+
+---
+
+## Test Coverage
+
+### Running Tests
+
+```bash
+pytest                           # All tests
+pytest tests/unit                # Unit tests only
+pytest -v --tb=short             # Verbose with short traceback
+pytest --cov=src                 # With coverage
+```
+
+### Test Structure
+
+```
+tests/
+├── conftest.py                  # Shared fixtures (mock_redis, etc.)
+├── test_agents.py               # Agent system tests
+├── test_cache.py                # Cache behavior tests
+├── test_config.py               # Configuration tests
+├── test_llm_router.py           # LLM routing tests
+├── test_types.py                # Type definition tests
+└── unit/
+    ├── agents/
+    │   └── test_graph.py        # LangGraph coordinator tests
+    └── mcp/
+        ├── client/
+        │   ├── test_stdio.py    # Stdio transport tests
+        │   └── test_client.py   # MCPClient tests
+        ├── registry/
+        │   ├── test_catalog.py  # Tool catalog tests
+        │   └── test_registry.py # Server registry tests
+        ├── executor/
+        │   └── test_executor.py # Tool executor tests
+        └── tools/
+            └── test_converter.py # Tool conversion tests
+```
+
+### Current Coverage (151 tests)
+
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| MCP Client/Transport | 26 | Stdio, HTTP, JSON-RPC |
+| Tool Registry/Catalog | 39 | Discovery, namespacing, TTL |
+| LangGraph Coordinator | 33 | Nodes, routing, tool binding |
+| Tool Executor | 13 | Caching, execution |
+| Agents | 7 | Coordinator, intent |
+| LLM Router | 3 | Task classification |
+| Cache | 6 | Set, get, TTL |
+| Config/Types | 7 | Settings, types |
+| Tool Converter | 17 | LangChain format |

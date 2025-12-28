@@ -29,9 +29,9 @@
     - [x] Subtask: Write tests to verify that tools from `ToolRegistry` are correctly passed to the LLM's `bind_tools` method.
     - [x] Subtask: Update coordinator to load tools from registry at startup.
 
-- [ ] Task: Implement Tool Execution Node
-    - [ ] Subtask: Write tests for the `action` node: receiving a tool call, executing it via `McpClient`, and returning output.
-    - [ ] Subtask: Implement `call_tool` method in `McpClient` and connect it to the graph's execution node.
+- [x] Task: Implement Tool Execution Node [bc999af]
+    - [x] Subtask: Write tests for the `action` node: receiving a tool call, executing it via `McpClient`, and returning output.
+    - [x] Subtask: Implement `call_tool` method in `McpClient` and connect it to the graph's execution node.
 
 - [ ] Task: Conductor - User Manual Verification 'Phase 2: Coordinator Agent Implementation' (Protocol in workflow.md)
 
