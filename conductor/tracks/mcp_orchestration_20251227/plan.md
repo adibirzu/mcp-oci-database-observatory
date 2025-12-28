@@ -12,10 +12,10 @@
     - [x] Subtask: Implement `McpClient` in `src/mcp/client.py` using the Python MCP SDK (or custom implementation if SDK is not yet stable) to connect to a server process.
     - [x] Subtask: Ensure `initialize` handshake works correctly.
 
-- [ ] Task: Implement Tool Discovery & Registry
-    - [ ] Subtask: Write tests for fetching tools list from a mock MCP server and converting to LangChain/LLM format.
-    - [ ] Subtask: Implement `list_tools` method in `McpClient`.
-    - [ ] Subtask: Create `ToolRegistry` in `src/mcp/registry.py` to aggregate tools from multiple clients.
+- [x] Task: Implement Tool Discovery & Registry [822647c]
+    - [x] Subtask: Write tests for fetching tools list from a mock MCP server and converting to LangChain/LLM format.
+    - [x] Subtask: Implement `list_tools` method in `McpClient`.
+    - [x] Subtask: Create `ToolRegistry` in `src/mcp/registry.py` to aggregate tools from multiple clients.
 
 - [ ] Task: Conductor - User Manual Verification 'Phase 1: Foundation - MCP Client & Configuration' (Protocol in workflow.md)
 
