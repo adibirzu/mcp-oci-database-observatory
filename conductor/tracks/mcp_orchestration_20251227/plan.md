@@ -25,9 +25,9 @@
     - [x] Subtask: Write tests for the basic graph structure (nodes: `input`, `agent`, `action`, `output`).
     - [x] Subtask: Implement the basic StateGraph in `src/agents/coordinator/graph.py`.
 
-- [ ] Task: Bind MCP Tools to Coordinator LLM
-    - [ ] Subtask: Write tests to verify that tools from `ToolRegistry` are correctly passed to the LLM's `bind_tools` method.
-    - [ ] Subtask: Update coordinator to load tools from registry at startup.
+- [x] Task: Bind MCP Tools to Coordinator LLM [503c61e]
+    - [x] Subtask: Write tests to verify that tools from `ToolRegistry` are correctly passed to the LLM's `bind_tools` method.
+    - [x] Subtask: Update coordinator to load tools from registry at startup.
 
 - [ ] Task: Implement Tool Execution Node
     - [ ] Subtask: Write tests for the `action` node: receiving a tool call, executing it via `McpClient`, and returning output.
