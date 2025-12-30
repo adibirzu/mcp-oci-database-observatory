@@ -283,5 +283,72 @@ async def health_check() -> dict[str, Any]:
     }
 
 
+@mcp.tool()
+async def database_status(
+    connection: str = "default",
+) -> dict[str, Any]:
+    """Get the status of a database connection.
+
+    Checks if the database is connected and returns connection details
+    including instance status, version, and session info.
+
+    Args:
+        connection: Database connection name (default: use configured default)
+
+    Returns:
+        Connection status and database information
+    """
+    try:
+        from src.mcp.client.stdio import StdioTransport
+        from src.mcp.client.client import MCPClient
+
+        sqlcl_path = os.getenv("SQLCL_PATH", "/Applications/sqlcl/bin/sql")
+
+        transport = StdioTransport(
+            command=sqlcl_path,
+            args=["-mcp"],
+            env={},
+        )
+        client = MCPClient("sqlcl", transport)
+
+        try:
+            await client.connect()
+
+            # Get list of connections first
+            connections = await client.call_tool("list-connections", {})
+
+            # Try to connect to specified database
+            if connection != "default":
+                connect_result = await client.call_tool("connect", {"connection": connection})
+            else:
+                connect_result = {"status": "using_default"}
+
+            # Get basic status query
+            try:
+                status_result = await client.call_tool(
+                    "run-sql",
+                    {"sql": "SELECT INSTANCE_NAME, STATUS, DATABASE_STATUS FROM V$INSTANCE"},
+                )
+            except Exception:
+                status_result = {"note": "Status query requires database connection"}
+
+            return {
+                "success": True,
+                "connection": connection,
+                "available_connections": connections,
+                "connect_result": connect_result,
+                "instance_status": status_result,
+            }
+        finally:
+            await client.disconnect()
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "connection": connection,
+        }
+
+
 if __name__ == "__main__":
     mcp.run()
