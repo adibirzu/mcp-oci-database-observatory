@@ -133,7 +133,7 @@ async def execute_sql(
 
             # Connect to specified database if not default
             if connection != "default":
-                await client.call_tool("connect", {"connection": connection})
+                await client.call_tool("connect", {"connection_name": connection})
 
             # Execute SQL
             result = await client.call_tool("run-sql", {"sql": sql})
@@ -184,7 +184,7 @@ async def get_schema_info(
             await client.connect()
 
             if connection != "default":
-                await client.call_tool("connect", {"connection": connection})
+                await client.call_tool("connect", {"connection_name": connection})
 
             result = await client.call_tool("schema-information", {"schema": schema})
 
@@ -319,7 +319,7 @@ async def database_status(
 
             # Try to connect to specified database
             if connection != "default":
-                connect_result = await client.call_tool("connect", {"connection": connection})
+                connect_result = await client.call_tool("connect", {"connection_name": connection})
             else:
                 connect_result = {"status": "using_default"}
 
