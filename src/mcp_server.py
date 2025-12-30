@@ -8,13 +8,89 @@ Run with: python -m src.mcp_server
 
 import asyncio
 import os
-import sys
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 # Initialize FastMCP server
 mcp = FastMCP(name="oci-database-observatory")
+
+# Shared SQLcl client for connection reuse
+_sqlcl_client = None
+_sqlcl_lock = asyncio.Lock()
+
+
+async def get_sqlcl_client(timeout: float = 120.0):
+    """Get or create a shared SQLcl client.
+
+    Reuses the connection to avoid Java startup overhead on each call.
+
+    Args:
+        timeout: Timeout for connect operation
+
+    Returns:
+        Connected MCPClient for SQLcl
+    """
+    global _sqlcl_client
+
+    async with _sqlcl_lock:
+        if _sqlcl_client is not None and _sqlcl_client.is_connected:
+            return _sqlcl_client
+
+        from src.mcp.client.stdio import StdioTransport
+        from src.mcp.client.client import MCPClient
+
+        sqlcl_path = os.getenv("SQLCL_PATH", "/Applications/sqlcl/bin/sql")
+
+        # Java options for better startup
+        env = {
+            "_JAVA_OPTIONS": "--enable-native-access=ALL-UNNAMED",
+            "SQLCL_MCP_MODE": "true",
+        }
+
+        java_home = os.getenv("JAVA_HOME")
+        if java_home:
+            env["JAVA_HOME"] = java_home
+
+        transport = StdioTransport(
+            command=sqlcl_path,
+            args=["-mcp"],
+            env=env,
+        )
+        client = MCPClient("sqlcl", transport)
+
+        try:
+            await asyncio.wait_for(client.connect(), timeout=timeout)
+            _sqlcl_client = client
+            return client
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"SQLcl startup timeout ({timeout}s) - Java may be slow to initialize")
+        except Exception as e:
+            raise RuntimeError(f"Failed to connect to SQLcl: {e}")
+
+
+async def safe_call_tool(client, tool_name: str, args: dict, timeout: float = 90.0) -> Any:
+    """Safely call a tool with timeout and error handling.
+
+    Args:
+        client: MCPClient instance
+        tool_name: Name of the tool to call
+        args: Tool arguments
+        timeout: Timeout in seconds
+
+    Returns:
+        Tool result or error dict
+    """
+    try:
+        result = await asyncio.wait_for(
+            client.call_tool(tool_name, args),
+            timeout=timeout,
+        )
+        return result
+    except asyncio.TimeoutError:
+        return {"error": f"Tool '{tool_name}' timeout after {timeout}s"}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @mcp.tool()
@@ -36,10 +112,18 @@ async def query_database(
     """
     try:
         from src.agents.coordinator.graph import LangGraphCoordinator
-        from src.mcp.registry.catalog import ToolCatalog
 
-        # Create coordinator with tool catalog
+        # Create coordinator
         coordinator = LangGraphCoordinator(max_iterations=10)
+
+        # Check if LLM is available
+        if coordinator.llm is None:
+            return {
+                "success": False,
+                "error": "No LLM configured",
+                "hint": "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or configure Oracle GenAI",
+                "suggestion": "Use execute_sql tool for direct SQL queries instead",
+            }
 
         # Execute query
         result = await coordinator.invoke(query)
@@ -116,35 +200,35 @@ async def execute_sql(
         Query results or execution status
     """
     try:
-        from src.mcp.client.stdio import StdioTransport
-        from src.mcp.client.client import MCPClient
+        client = await get_sqlcl_client()
 
-        sqlcl_path = os.getenv("SQLCL_PATH", "/Applications/sqlcl/bin/sql")
+        # Connect to specified database if not default
+        if connection != "default":
+            connect_result = await safe_call_tool(
+                client, "connect", {"connection_name": connection}, timeout=60.0
+            )
+            if isinstance(connect_result, dict) and "error" in connect_result:
+                return {
+                    "success": False,
+                    "error": f"Connection failed: {connect_result['error']}",
+                    "connection": connection,
+                }
 
-        transport = StdioTransport(
-            command=sqlcl_path,
-            args=["-mcp"],
-            env={},
-        )
-        client = MCPClient("sqlcl", transport)
+        # Execute SQL
+        result = await safe_call_tool(client, "run-sql", {"sql": sql}, timeout=120.0)
 
-        try:
-            await client.connect()
-
-            # Connect to specified database if not default
-            if connection != "default":
-                await client.call_tool("connect", {"connection_name": connection})
-
-            # Execute SQL
-            result = await client.call_tool("run-sql", {"sql": sql})
-
+        if isinstance(result, dict) and "error" in result:
             return {
-                "success": True,
-                "result": result,
+                "success": False,
+                "error": result["error"],
                 "connection": connection,
             }
-        finally:
-            await client.disconnect()
+
+        return {
+            "success": True,
+            "result": result,
+            "connection": connection,
+        }
 
     except Exception as e:
         return {
@@ -168,33 +252,34 @@ async def get_schema_info(
         Schema metadata including tables, views, procedures
     """
     try:
-        from src.mcp.client.stdio import StdioTransport
-        from src.mcp.client.client import MCPClient
+        client = await get_sqlcl_client()
 
-        sqlcl_path = os.getenv("SQLCL_PATH", "/Applications/sqlcl/bin/sql")
+        if connection != "default":
+            connect_result = await safe_call_tool(
+                client, "connect", {"connection_name": connection}, timeout=60.0
+            )
+            if isinstance(connect_result, dict) and "error" in connect_result:
+                return {
+                    "success": False,
+                    "error": f"Connection failed: {connect_result['error']}",
+                }
 
-        transport = StdioTransport(
-            command=sqlcl_path,
-            args=["-mcp"],
-            env={},
+        result = await safe_call_tool(
+            client, "schema-information", {"schema": schema}, timeout=90.0
         )
-        client = MCPClient("sqlcl", transport)
 
-        try:
-            await client.connect()
-
-            if connection != "default":
-                await client.call_tool("connect", {"connection_name": connection})
-
-            result = await client.call_tool("schema-information", {"schema": schema})
-
+        if isinstance(result, dict) and "error" in result:
             return {
-                "success": True,
+                "success": False,
+                "error": result["error"],
                 "schema": schema,
-                "result": result,
             }
-        finally:
-            await client.disconnect()
+
+        return {
+            "success": True,
+            "schema": schema,
+            "result": result,
+        }
 
     except Exception as e:
         return {
@@ -211,28 +296,19 @@ async def list_connections() -> dict[str, Any]:
         List of connection names and their status
     """
     try:
-        from src.mcp.client.stdio import StdioTransport
-        from src.mcp.client.client import MCPClient
+        client = await get_sqlcl_client()
+        result = await safe_call_tool(client, "list-connections", {}, timeout=30.0)
 
-        sqlcl_path = os.getenv("SQLCL_PATH", "/Applications/sqlcl/bin/sql")
-
-        transport = StdioTransport(
-            command=sqlcl_path,
-            args=["-mcp"],
-            env={},
-        )
-        client = MCPClient("sqlcl", transport)
-
-        try:
-            await client.connect()
-            result = await client.call_tool("list-connections", {})
-
+        if isinstance(result, dict) and "error" in result:
             return {
-                "success": True,
-                "connections": result,
+                "success": False,
+                "error": result["error"],
             }
-        finally:
-            await client.disconnect()
+
+        return {
+            "success": True,
+            "connections": result,
+        }
 
     except Exception as e:
         return {
@@ -260,18 +336,21 @@ async def health_check() -> dict[str, Any]:
         from src.agents.coordinator.graph import LangGraphCoordinator
 
         coordinator = LangGraphCoordinator()
-        status["coordinator"] = "healthy"
+        if coordinator.llm:
+            status["coordinator"] = "healthy (LLM configured)"
+        else:
+            status["coordinator"] = "partial (no LLM)"
     except Exception as e:
         status["coordinator"] = f"error: {str(e)[:50]}"
 
     # Check SQLcl
     try:
-        from src.mcp.client.stdio import StdioTransport
-        from src.mcp.client.client import MCPClient
-
         sqlcl_path = os.getenv("SQLCL_PATH", "/Applications/sqlcl/bin/sql")
         if os.path.exists(sqlcl_path):
-            status["sqlcl"] = "available"
+            if _sqlcl_client and _sqlcl_client.is_connected:
+                status["sqlcl"] = "connected"
+            else:
+                status["sqlcl"] = "available (not connected)"
         else:
             status["sqlcl"] = "not_found"
     except Exception as e:
@@ -299,48 +378,33 @@ async def database_status(
         Connection status and database information
     """
     try:
-        from src.mcp.client.stdio import StdioTransport
-        from src.mcp.client.client import MCPClient
+        client = await get_sqlcl_client()
 
-        sqlcl_path = os.getenv("SQLCL_PATH", "/Applications/sqlcl/bin/sql")
+        # Get list of connections first
+        connections = await safe_call_tool(client, "list-connections", {}, timeout=30.0)
 
-        transport = StdioTransport(
-            command=sqlcl_path,
-            args=["-mcp"],
-            env={},
+        # Try to connect to specified database
+        connect_result = None
+        if connection != "default":
+            connect_result = await safe_call_tool(
+                client, "connect", {"connection_name": connection}, timeout=60.0
+            )
+
+        # Get basic status query
+        status_result = await safe_call_tool(
+            client,
+            "run-sql",
+            {"sql": "SELECT INSTANCE_NAME, STATUS, DATABASE_STATUS FROM V$INSTANCE"},
+            timeout=60.0,
         )
-        client = MCPClient("sqlcl", transport)
 
-        try:
-            await client.connect()
-
-            # Get list of connections first
-            connections = await client.call_tool("list-connections", {})
-
-            # Try to connect to specified database
-            if connection != "default":
-                connect_result = await client.call_tool("connect", {"connection_name": connection})
-            else:
-                connect_result = {"status": "using_default"}
-
-            # Get basic status query
-            try:
-                status_result = await client.call_tool(
-                    "run-sql",
-                    {"sql": "SELECT INSTANCE_NAME, STATUS, DATABASE_STATUS FROM V$INSTANCE"},
-                )
-            except Exception:
-                status_result = {"note": "Status query requires database connection"}
-
-            return {
-                "success": True,
-                "connection": connection,
-                "available_connections": connections,
-                "connect_result": connect_result,
-                "instance_status": status_result,
-            }
-        finally:
-            await client.disconnect()
+        return {
+            "success": True,
+            "connection": connection,
+            "available_connections": connections,
+            "connect_result": connect_result,
+            "instance_status": status_result,
+        }
 
     except Exception as e:
         return {
@@ -348,6 +412,30 @@ async def database_status(
             "error": str(e),
             "connection": connection,
         }
+
+
+@mcp.tool()
+async def disconnect_sqlcl() -> dict[str, Any]:
+    """Disconnect the shared SQLcl client.
+
+    Use this to force a reconnection on the next call.
+
+    Returns:
+        Disconnection status
+    """
+    global _sqlcl_client
+
+    async with _sqlcl_lock:
+        if _sqlcl_client:
+            try:
+                await _sqlcl_client.disconnect()
+                _sqlcl_client = None
+                return {"success": True, "message": "SQLcl client disconnected"}
+            except Exception as e:
+                _sqlcl_client = None
+                return {"success": True, "message": f"Disconnected with warning: {e}"}
+        else:
+            return {"success": True, "message": "No active SQLcl client"}
 
 
 if __name__ == "__main__":
