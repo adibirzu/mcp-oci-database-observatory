@@ -193,91 +193,54 @@ async def safe_call_tool(client, tool_name: str, args: dict, timeout: float = 90
         return {"error": error_str}
 
 
+
+
 @mcp.tool()
-async def query_database(
-    query: str,
-    database: str = "default",
-) -> dict[str, Any]:
-    """Execute a natural language query against Oracle databases.
-
-    This tool uses the LangGraph Coordinator to interpret natural language
-    queries and execute appropriate SQL or analysis operations.
-
-    Args:
-        query: Natural language query (e.g., "What tables are in the HR schema?")
-        database: Target database connection name (default: use configured default)
+async def list_sqlcl_tools() -> dict[str, Any]:
+    """List all available tools from the SQLcl MCP server.
 
     Returns:
-        Query results with response text and metadata
+        List of SQLcl tool names and descriptions
     """
     try:
-        from src.agents.coordinator.graph import LangGraphCoordinator
+        client = await get_sqlcl_client()
+        tools = await safe_call_tool(client, "tools/list", {}, timeout=30.0)
 
-        # Create coordinator
-        coordinator = LangGraphCoordinator(max_iterations=10)
-
-        # Check if LLM is available
-        if coordinator.llm is None:
+        # Handle error response
+        if isinstance(tools, dict) and "error" in tools:
             return {
                 "success": False,
-                "error": "No LLM configured",
-                "hint": "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or configure Oracle GenAI",
-                "suggestion": "Use execute_sql tool for direct SQL queries instead",
+                "error": tools["error"],
             }
 
-        # Execute query
-        result = await coordinator.invoke(query)
+        # If tools is a list from the response
+        if isinstance(tools, list):
+            return {
+                "success": True,
+                "tool_count": len(tools),
+                "tools": tools,
+            }
 
-        return {
-            "success": result.get("success", False),
-            "response": result.get("response", "No response"),
-            "iterations": result.get("iterations", 0),
-            "database": database,
-        }
-    except ImportError as e:
-        return {
-            "success": False,
-            "error": f"Missing dependencies: {e}",
-            "hint": "Ensure LangChain and coordinator dependencies are installed",
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e),
-        }
+        # Get tools from transport directly
+        from src.mcp.client.stdio import StdioTransport
 
-
-@mcp.tool()
-async def list_mcp_tools() -> dict[str, Any]:
-    """List all available MCP tools from connected servers.
-
-    Returns aggregated tool information from all configured MCP servers
-    including SQLcl, OCI OPSI, Logan, and unified OCI MCP.
-
-    Returns:
-        Dictionary with tool names, descriptions, and server info
-    """
-    try:
-        from src.mcp.registry.catalog import ToolCatalog
-        from src.mcp.registry.registry import ServerRegistry
-
-        registry = ServerRegistry()
-        catalog = ToolCatalog(registry)
-
-        tools = catalog.list_tools()
+        if hasattr(client, "_transport") and isinstance(client._transport, StdioTransport):
+            tool_list = await client._transport.list_tools()
+            return {
+                "success": True,
+                "tool_count": len(tool_list),
+                "tools": [
+                    {"name": t.get("name"), "description": t.get("description", "")[:100]}
+                    for t in tool_list
+                ],
+            }
 
         return {
             "success": True,
-            "tool_count": len(tools),
-            "tools": [
-                {
-                    "name": t.name,
-                    "server": t.server_id,
-                    "description": t.description[:100] if t.description else "",
-                }
-                for t in tools
-            ],
+            "message": "SQLcl connected but tool list format unexpected",
+            "raw": str(tools)[:200],
         }
+
     except Exception as e:
         return {
             "success": False,
@@ -419,29 +382,22 @@ async def list_connections() -> dict[str, Any]:
 
 @mcp.tool()
 async def health_check() -> dict[str, Any]:
-    """Check health of OCI Database Observatory and connected services.
+    """Check health of OCI Database Observatory MCP server.
 
     Returns:
-        Health status of coordinator and MCP servers
+        Health status of MCP server and SQLcl connection
     """
     status = {
-        "coordinator": "unknown",
+        "mcp_server": "healthy",
         "sqlcl": "unknown",
-        "oci_opsi": "unknown",
-        "oci_logan": "unknown",
+        "public_ip": None,
     }
 
-    # Check coordinator
+    # Get public IP for ACL reference
     try:
-        from src.agents.coordinator.graph import LangGraphCoordinator
-
-        coordinator = LangGraphCoordinator()
-        if coordinator.llm:
-            status["coordinator"] = "healthy (LLM configured)"
-        else:
-            status["coordinator"] = "partial (no LLM)"
-    except Exception as e:
-        status["coordinator"] = f"error: {str(e)[:50]}"
+        status["public_ip"] = get_public_ip()
+    except Exception:
+        status["public_ip"] = "unable to determine"
 
     # Check SQLcl
     try:
@@ -452,13 +408,21 @@ async def health_check() -> dict[str, Any]:
             else:
                 status["sqlcl"] = "available (not connected)"
         else:
-            status["sqlcl"] = "not_found"
+            status["sqlcl"] = f"not_found at {sqlcl_path}"
     except Exception as e:
         status["sqlcl"] = f"error: {str(e)[:50]}"
+
+    # Check Java
+    java_home = os.getenv("JAVA_HOME", "")
+    if java_home and os.path.exists(java_home):
+        status["java"] = "configured"
+    else:
+        status["java"] = "JAVA_HOME not set or invalid"
 
     return {
         "success": True,
         "status": status,
+        "acl_note": f"Ensure IP {status['public_ip']} is in database ACL" if status["public_ip"] else None,
     }
 
 
