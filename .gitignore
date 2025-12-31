@@ -92,3 +92,30 @@ coverage.xml
 
 # Token caches
 .oca_token_cache.json
+token_cache*.json
+*_token*.json
+
+# Test artifacts
+test_safety.txt
+
+# OCI specific
+**/Wallet_*
+*.wallet
+tnsnames.ora.local
+
+# Local config overrides
+*.local.json
+*.local.yaml
+*.local.yml
+
+# IDE specific
+.cursor/
+*.code-workspace
+
+# Jupyter notebooks (may contain output)
+.ipynb_checkpoints/
+*.ipynb
+
+# macOS
+*.DS_Store
+**/.DS_Store

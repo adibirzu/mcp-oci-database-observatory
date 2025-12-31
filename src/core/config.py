@@ -40,7 +40,13 @@ class Settings(BaseSettings):
     oci_region: str = Field(default="us-ashburn-1")
 
     # OCI APM / OpenTelemetry
-    # [Link to Secure Variable: OCI_APM_ENDPOINT]
+    # OCI APM uses Zipkin format, not OTLP
+    # [Link to Secure Variable: OCI_APM_DATA_UPLOAD_ENDPOINT]
+    oci_apm_data_upload_endpoint: str | None = Field(
+        default=None,
+        description="OCI APM data upload endpoint base URL (without path)"
+    )
+    # Legacy endpoint field (kept for backwards compatibility)
     oci_apm_endpoint: str | None = Field(default=None)
     # [Link to Secure Variable: OCI_APM_PRIVATE_DATA_KEY]
     oci_apm_private_key: str | None = Field(default=None, alias="OCI_APM_PRIVATE_DATA_KEY")
@@ -50,10 +56,15 @@ class Settings(BaseSettings):
     otel_tracing_enabled: bool = Field(default=True)
     otel_service_name: str = Field(default="oci-obs-api")
 
-    # OCI Logging
+    # OCI Logging - OCIDs required for production
+    # [Link to Secure Variable: OCI_LOG_GROUP_ID]
     oci_logging_enabled: bool = Field(default=True)
+    oci_log_group_id: str | None = Field(default=None, description="OCI Log Group OCID")
+    # [Link to Secure Variable: OCI_LOG_ID]
+    oci_log_id: str | None = Field(default=None, description="OCI Custom Log OCID")
+    oci_logging_region: str = Field(default="eu-frankfurt-1", description="OCI Logging region")
     oci_log_group_name: str = Field(default="oci-database-observatory")
-    oci_log_name: str = Field(default="application-logs")
+    oci_log_name: str = Field(default="mcp-server-logs")
 
     # Oracle Code Assist
     oca_idcs_url: str | None = Field(default=None)

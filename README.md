@@ -73,11 +73,38 @@ src/
 ├── agents/       # Multi-agent system
 ├── llm/          # LLM router with fallback
 ├── mcp/          # MCP client infrastructure
-├── observability/# OCI APM/OTEL
-├── logging/      # OCI Logging
-├── cache/        # Redis caching
+├── mcp_server/   # FastMCP server (OPSI, SQLcl, Logan, Tenancy tools)
+├── observability/# OCI APM/OTEL + OCI Logging
+├── cache/        # Redis + file-based caching
 └── core/         # Config, types, errors
 ```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System architecture and data flow |
+| [OCI Observability](docs/OCI_OBSERVABILITY.md) | APM and Logging setup guide |
+| [MCP Tool Reference](docs/OCI_MCP_REFERENCE.md) | Complete tool API documentation |
+
+## MCP Server Tools
+
+The MCP server provides 33+ tools across 4 categories:
+
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **OPSI** | 15 | Database monitoring, performance analysis, cost optimization |
+| **SQLcl** | 6 | Direct database operations, SQL execution |
+| **Logan** | 8 | Log analytics queries, source discovery |
+| **Tenancy** | 4 | Multi-tenancy profile management |
+
+### Key Features
+
+- **Tiered Caching**: Static (1h), Stable (30m), Infrastructure (10m), Analysis (2m), Real-time (0)
+- **Multi-Tenancy**: Profile-based OCI credential isolation
+- **AI Agent Support**: Skill recommendations and token-optimized responses
+- **OCI APM**: Distributed tracing with OpenTelemetry
+- **OCI Logging**: Structured logs with APM trace correlation
 
 ## License
 
