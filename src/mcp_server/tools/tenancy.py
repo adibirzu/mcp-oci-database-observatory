@@ -22,7 +22,16 @@ from ..cache import get_cache, cached_call
 def register_tools(mcp: "FastMCP") -> None:
     """Register tenancy management tools with the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_tenancy_list_profiles",
+        annotations={
+            "title": "List OCI Profiles",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def list_oci_profiles() -> Dict[str, Any]:
         """List all available OCI profiles from ~/.oci/config.
 
@@ -48,7 +57,16 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return await cached_call("list_oci_profiles", {}, _fetch)
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_tenancy_get_profile",
+        annotations={
+            "title": "Get Profile Info",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def get_profile_info(
         profile_name: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -88,7 +106,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_tenancy_set_profile",
+        annotations={
+            "title": "Set Active Profile",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def set_active_profile(
         profile_name: str,
     ) -> Dict[str, Any]:
@@ -121,7 +148,16 @@ def register_tools(mcp: "FastMCP") -> None:
                 "available_profiles": [p["name"] for p in manager.list_profiles()],
             }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_tenancy_list_compartments",
+        annotations={
+            "title": "List Compartments",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_compartments(
         compartment_id: Optional[str] = None,
         profile: Optional[str] = None,
@@ -198,7 +234,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_health_check",
+        annotations={
+            "title": "Health Check",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def health_check() -> Dict[str, Any]:
         """Check health of OCI Database Observatory MCP server.
 
@@ -271,7 +316,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "acl_note": f"Ensure IP {status['public_ip']} is in database ACL" if status["public_ip"] else None,
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_cache_status",
+        annotations={
+            "title": "Cache Status",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def cache_status() -> Dict[str, Any]:
         """Get cache statistics and status.
 
@@ -286,7 +340,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "cache": stats,
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_clear_cache",
+        annotations={
+            "title": "Clear Cache",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def clear_cache() -> Dict[str, Any]:
         """Clear all cached responses.
 
@@ -302,7 +365,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "entries_cleared": count,
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_ping",
+        annotations={
+            "title": "Ping",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def ping() -> Dict[str, Any]:
         """Simple ping to check if MCP server is responding.
 

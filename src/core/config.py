@@ -7,7 +7,7 @@ See documentation placeholders: [Link to Secure Variable: VAR_NAME]
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,7 +32,10 @@ class Settings(BaseSettings):
         default=Path.home() / ".oci" / "config",
         description="Path to OCI config file"
     )
-    oci_profile: str = Field(default="DEFAULT", alias="OCI_CLI_PROFILE")
+    oci_profile: str = Field(
+        default="DEFAULT",
+        validation_alias=AliasChoices("OCI_CLI_PROFILE", "OCI_PROFILE"),
+    )
 
     # OCI Compartment
     # [Link to Secure Variable: OCI_COMPARTMENT_ID]
@@ -96,7 +99,10 @@ class Settings(BaseSettings):
     sqlcl_path: str = Field(default="/Applications/sqlcl/bin/sql")
 
     # Caching
-    redis_url: str = Field(default="redis://localhost:6379")
+    redis_url: str = Field(
+        default="redis://localhost:6379",
+        validation_alias=AliasChoices("REDIS_URL", "MCP_REDIS_URL"),
+    )
 
     # Session
     # [Link to Secure Variable: SESSION_SECRET]

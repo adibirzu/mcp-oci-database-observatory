@@ -11,6 +11,7 @@ Implements tiered TTL caching based on data volatility:
 import asyncio
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -48,6 +49,10 @@ TOOL_CACHE_TIERS: Dict[str, CacheTier] = {
     "list_connections": CacheTier.INFRASTRUCTURE,
     "get_schema_info": CacheTier.INFRASTRUCTURE,
     # Analysis - relatively fresh data
+    "analyze_cpu_usage": CacheTier.ANALYSIS,
+    "analyze_memory_usage": CacheTier.ANALYSIS,
+    "analyze_io_performance": CacheTier.ANALYSIS,
+    # Backward compatibility aliases
     "skill_analyze_cpu_usage": CacheTier.ANALYSIS,
     "skill_analyze_memory_usage": CacheTier.ANALYSIS,
     "skill_analyze_io_performance": CacheTier.ANALYSIS,
@@ -101,7 +106,7 @@ class ResponseCache:
     AI agent response times.
     """
 
-    def __init__(self, max_entries: int = 1000):
+    def __init__(self, max_entries: int = 1000, redis_url: str | None = None):
         """Initialize cache.
 
         Args:
@@ -111,6 +116,23 @@ class ResponseCache:
         self._lock = asyncio.Lock()
         self._max_entries = max_entries
         self._stats = CacheStats()
+        self._redis_url = redis_url or os.getenv("MCP_REDIS_URL") or os.getenv("REDIS_URL")
+        self._redis_prefix = os.getenv("MCP_CACHE_KEY_PREFIX", "mcp:cache")
+        self._redis_namespace = f"{self._redis_prefix}:responses"
+        backend = os.getenv("MCP_CACHE_BACKEND", "").lower()
+        self._use_redis = bool(self._redis_url) if backend != "memory" else False
+        self._client = None
+
+    async def _get_client(self):
+        if self._client is None:
+            import redis.asyncio as redis
+
+            self._client = redis.from_url(self._redis_url, decode_responses=True)
+            await self._client.ping()
+        return self._client
+
+    def _redis_key(self, key: str) -> str:
+        return f"{self._redis_namespace}:{key}"
 
     def _make_key(self, tool_name: str, args: Dict[str, Any]) -> str:
         """Generate cache key from tool name and args.
@@ -125,7 +147,8 @@ class ResponseCache:
         # Sort args for consistent keys
         sorted_args = json.dumps(args, sort_keys=True, default=str)
         combined = f"{tool_name}:{sorted_args}"
-        return hashlib.sha256(combined.encode()).hexdigest()[:32]
+        digest = hashlib.sha256(combined.encode()).hexdigest()[:32]
+        return f"{tool_name}:{digest}"
 
     def get_ttl(self, tool_name: str) -> float:
         """Get TTL for a tool.
@@ -152,6 +175,22 @@ class ResponseCache:
         key = self._make_key(tool_name, args)
 
         async with self._lock:
+            if self._use_redis:
+                try:
+                    client = await self._get_client()
+                    value = await client.get(self._redis_key(key))
+                    if value is None:
+                        self._stats.misses += 1
+                        return None
+                    self._stats.hits += 1
+                    try:
+                        return json.loads(value)
+                    except json.JSONDecodeError:
+                        return value
+                except Exception:
+                    self._stats.misses += 1
+                    return None
+
             entry = self._cache.get(key)
             if entry is None:
                 self._stats.misses += 1
@@ -187,6 +226,16 @@ class ResponseCache:
         key = self._make_key(tool_name, args)
 
         async with self._lock:
+            if self._use_redis:
+                try:
+                    client = await self._get_client()
+                    payload = json.dumps(value, default=str)
+                    await client.setex(self._redis_key(key), int(ttl), payload)
+                    self._stats.entries += 1
+                    return
+                except Exception:
+                    self._use_redis = False
+
             # Evict oldest if at capacity
             if len(self._cache) >= self._max_entries:
                 await self._evict_oldest()
@@ -218,6 +267,21 @@ class ResponseCache:
             Number of entries invalidated
         """
         async with self._lock:
+            if self._use_redis:
+                try:
+                    client = await self._get_client()
+                    if tool_name is None:
+                        pattern = f"{self._redis_namespace}:*"
+                    else:
+                        pattern = f"{self._redis_namespace}:{tool_name}:*"
+                    keys = [k async for k in client.scan_iter(match=pattern)]
+                    if keys:
+                        await client.delete(*keys)
+                    self._stats.entries = 0
+                    return len(keys)
+                except Exception:
+                    self._use_redis = False
+
             if tool_name is None:
                 count = len(self._cache)
                 self._cache.clear()
@@ -241,16 +305,25 @@ class ResponseCache:
             Cache statistics dict
         """
         async with self._lock:
-            # Clean expired entries
-            now = time.time()
-            expired_keys = [k for k, v in self._cache.items() if v.is_expired()]
-            for key in expired_keys:
-                del self._cache[key]
-                self._stats.evictions += 1
+            if self._use_redis:
+                try:
+                    client = await self._get_client()
+                    keys = [k async for k in client.scan_iter(match=f"{self._redis_namespace}:*")]
+                    self._stats.entries = len(keys)
+                except Exception:
+                    self._use_redis = False
 
-            self._stats.entries = len(self._cache)
+            if not self._use_redis:
+                # Clean expired entries
+                expired_keys = [k for k, v in self._cache.items() if v.is_expired()]
+                for key in expired_keys:
+                    del self._cache[key]
+                    self._stats.evictions += 1
+
+                self._stats.entries = len(self._cache)
 
             return {
+                "backend": "redis" if self._use_redis else "memory",
                 "hits": self._stats.hits,
                 "misses": self._stats.misses,
                 "hit_rate": f"{self._stats.hit_rate():.1f}%",
@@ -268,7 +341,8 @@ def get_cache() -> ResponseCache:
     """Get the global cache instance."""
     global _cache
     if _cache is None:
-        _cache = ResponseCache()
+        redis_url = os.getenv("MCP_REDIS_URL") or os.getenv("REDIS_URL")
+        _cache = ResponseCache(redis_url=redis_url)
     return _cache
 
 

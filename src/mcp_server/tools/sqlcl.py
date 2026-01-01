@@ -118,7 +118,16 @@ async def safe_call_tool(client, tool_name: str, args: dict, timeout: float = 90
 def register_tools(mcp: "FastMCP") -> None:
     """Register SQLcl tools with the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_execute_sql",
+        annotations={
+            "title": "Execute SQL",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+    )
     async def execute_sql(
         sql: str,
         connection: str = "default",
@@ -169,7 +178,16 @@ def register_tools(mcp: "FastMCP") -> None:
                 "error": str(e),
             }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_get_schema",
+        annotations={
+            "title": "Get Schema Info",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def get_schema_info(
         schema: str,
         connection: str = "default",
@@ -221,7 +239,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_list_connections",
+        annotations={
+            "title": "List Database Connections",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_connections() -> Dict[str, Any]:
         """List available database connections configured in SQLcl.
 
@@ -246,7 +273,16 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return await cached_call("list_connections", {}, _fetch)
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_get_status",
+        annotations={
+            "title": "Get Database Status",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def database_status(
         connection: str = "default",
     ) -> Dict[str, Any]:
@@ -294,7 +330,16 @@ def register_tools(mcp: "FastMCP") -> None:
                 "connection": connection,
             }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_disconnect",
+        annotations={
+            "title": "Disconnect Database",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def sqlcl_disconnect() -> Dict[str, Any]:
         """Disconnect the shared SQLcl client.
 
@@ -306,7 +351,16 @@ def register_tools(mcp: "FastMCP") -> None:
             return {"success": True, "message": "SQLcl client disconnected"}
         return {"success": True, "message": "No active SQLcl client"}
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_check_network",
+        annotations={
+            "title": "Check Network Access",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def check_network_access(
         host: str = "",
         port: int = 1522,
@@ -407,7 +461,16 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return result
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_database_get_ip",
+        annotations={
+            "title": "Get My IP Address",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def get_my_ip() -> Dict[str, Any]:
         """Get your current public IP address.
 

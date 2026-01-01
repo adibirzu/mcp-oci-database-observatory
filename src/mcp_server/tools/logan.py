@@ -47,7 +47,16 @@ def register_tools(mcp: "FastMCP") -> None:
         manager = get_oci_manager()
         return await manager.get_namespace(profile)
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_execute_query",
+        annotations={
+            "title": "Execute Logan Query",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def execute_logan_query(
         query: str,
         time_range_minutes: int = 1440,
@@ -152,7 +161,16 @@ def register_tools(mcp: "FastMCP") -> None:
                 "hint": "Check query syntax. Use Logan syntax like: * | stats count by 'Log Source'",
             }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_list_sources",
+        annotations={
+            "title": "List Log Sources",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_log_sources(
         display_name: Optional[str] = None,
         source_type: Optional[str] = None,
@@ -236,7 +254,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_list_entities",
+        annotations={
+            "title": "List Entities",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_entities(
         entity_type: Optional[str] = None,
         name: Optional[str] = None,
@@ -317,7 +344,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_list_parsers",
+        annotations={
+            "title": "List Parsers",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_parsers(
         parser_name: Optional[str] = None,
         is_system: Optional[bool] = None,
@@ -390,7 +426,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_list_labels",
+        annotations={
+            "title": "List Labels",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_labels(
         label_name: Optional[str] = None,
         limit: int = 100,
@@ -459,7 +504,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_list_groups",
+        annotations={
+            "title": "List Log Groups",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_log_groups(
         limit: int = 100,
         compartment_id: Optional[str] = None,
@@ -530,7 +584,16 @@ def register_tools(mcp: "FastMCP") -> None:
     # TIER 2: Security Analysis Skills
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_run_security_query",
+        annotations={
+            "title": "Run Security Query",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def run_security_query(
         query_type: str,
         time_range_minutes: int = 1440,
@@ -583,7 +646,16 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return result
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_detect_anomalies",
+        annotations={
+            "title": "Detect Anomalies",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": False,
+            "openWorldHint": True,
+        },
+    )
     async def detect_anomalies(
         baseline_hours: int = 168,
         detection_hours: int = 24,
@@ -684,7 +756,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "sources_analyzed": len(recent_data),
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_get_summary",
+        annotations={
+            "title": "Get Log Summary",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def get_log_summary(
         time_range_minutes: int = 1440,
         compartment_id: Optional[str] = None,
@@ -769,7 +850,16 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return summary
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_suggest_query",
+        annotations={
+            "title": "Suggest Query",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def suggest_query(
         intent: str,
     ) -> Dict[str, Any]:
@@ -831,7 +921,16 @@ def register_tools(mcp: "FastMCP") -> None:
             },
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_list_active_sources",
+        annotations={
+            "title": "List Active Sources",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_active_log_sources(
         time_range_minutes: int = 1440,
         min_count: int = 1,
@@ -885,7 +984,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "sources": active_sources,
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_get_entity_logs",
+        annotations={
+            "title": "Get Entity Logs",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def get_entity_logs(
         entity_name: str,
         time_range_minutes: int = 1440,
@@ -925,7 +1033,16 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return result
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_logan_list_skills",
+        annotations={
+            "title": "List Logan Skills",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def list_logan_skills() -> Dict[str, Any]:
         """List all available Logan skills with usage hints.
 

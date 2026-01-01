@@ -85,13 +85,14 @@ def register_all_tools(mcp: "FastMCP") -> None:
     Args:
         mcp: FastMCP server instance
     """
-    from . import sqlcl, opsi, logan, tenancy
+    from . import sqlcl, opsi, logan, tenancy, dbmgmt
 
     # Each module has a register_tools(mcp) function
     sqlcl.register_tools(mcp)
     opsi.register_tools(mcp)
     logan.register_tools(mcp)
     tenancy.register_tools(mcp)
+    dbmgmt.register_tools(mcp)  # DB Management with AWR support
 
     # Wrap all registered tools with tracing
     if _tracing_available:

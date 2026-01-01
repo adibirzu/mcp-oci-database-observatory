@@ -39,6 +39,8 @@ REGION_MAP = {
 
 # Cache directory
 CACHE_DIR = Path(os.getenv("MCP_CACHE_DIR", os.path.expanduser("~/.mcp-oci/cache")))
+CACHE_BACKEND = os.getenv("MCP_CACHE_BACKEND", "file").lower()
+REDIS_URL = os.getenv("MCP_REDIS_URL") or os.getenv("REDIS_URL")
 
 # Skill metadata for AI agent tool selection
 SKILL_METADATA = {
@@ -113,11 +115,25 @@ class DatabaseCache:
         self.profile = profile
         self._safe_profile = profile.replace("/", "_").replace("\\", "_")
         self._cache_file = CACHE_DIR / f"opsi_cache_{self._safe_profile}.json"
+        self._use_redis = CACHE_BACKEND == "redis" and bool(REDIS_URL)
+        self._redis_key = f"opsi_cache:{self._safe_profile}"
+        self._redis_client = None
         self._data: Dict[str, Any] = {}
         self._loaded = False
 
+    def _get_redis(self):
+        if not self._use_redis:
+            return None
+        if self._redis_client is None:
+            import redis  # type: ignore
+
+            self._redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        return self._redis_client
+
     def _ensure_dir(self):
         """Ensure cache directory exists."""
+        if self._use_redis:
+            return
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     def load(self) -> bool:
@@ -125,12 +141,21 @@ class DatabaseCache:
         if self._loaded:
             return True
         try:
+            if self._use_redis:
+                client = self._get_redis()
+                if client:
+                    payload = client.get(self._redis_key)
+                    if payload:
+                        self._data = json.loads(payload)
+                        self._loaded = True
+                        return True
             if self._cache_file.exists():
                 with open(self._cache_file, "r") as f:
                     self._data = json.load(f)
                 self._loaded = True
                 return True
         except Exception:
+            self._use_redis = False
             pass
         self._data = {"metadata": {}, "databases": {}, "compartments": {}, "statistics": {}}
         return False
@@ -138,11 +163,18 @@ class DatabaseCache:
     def save(self) -> bool:
         """Save cache to file."""
         try:
+            if self._use_redis:
+                client = self._get_redis()
+                if client:
+                    payload = json.dumps(self._data, default=str)
+                    client.set(self._redis_key, payload)
+                    return True
             self._ensure_dir()
             with open(self._cache_file, "w") as f:
                 json.dump(self._data, f, indent=2, default=str)
             return True
         except Exception:
+            self._use_redis = False
             return False
 
     def is_valid(self, max_age_hours: int = 24) -> bool:
@@ -302,7 +334,16 @@ def register_tools(mcp: "FastMCP") -> None:
     # TIER 1: Cache-Based Tools (Instant, <100ms)
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_get_fleet_summary",
+        annotations={
+            "title": "Get Fleet Summary",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def get_fleet_summary(
         profile: Optional[str] = None,
         use_cache: bool = True,
@@ -352,7 +393,16 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return await cached_call("get_fleet_summary", {"profile": profile}, _fetch)
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_search_databases",
+        annotations={
+            "title": "Search Databases",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def search_databases(
         name: Optional[str] = None,
         compartment_id: Optional[str] = None,
@@ -428,7 +478,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_get_database",
+        annotations={
+            "title": "Get Database Details",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def get_cached_database(
         database_id: str,
         profile: Optional[str] = None,
@@ -458,7 +517,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "profile": profile_name,
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_get_statistics",
+        annotations={
+            "title": "Get Cache Statistics",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def get_cached_statistics(
         profile: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -486,7 +554,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "statistics": stats,
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_build_cache",
+        annotations={
+            "title": "Build Database Cache",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def build_database_cache(
         compartment_id: Optional[str] = None,
         profile: Optional[str] = None,
@@ -522,7 +599,16 @@ def register_tools(mcp: "FastMCP") -> None:
         except Exception as e:
             return {"success": False, "error": str(e), "profile": profile_name}
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_refresh_cache",
+        annotations={
+            "title": "Refresh Cache If Needed",
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def refresh_cache_if_needed(
         max_age_hours: int = 24,
         profile: Optional[str] = None,
@@ -571,7 +657,16 @@ def register_tools(mcp: "FastMCP") -> None:
     # TIER 2: Performance Analysis Skills
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_analyze_cpu",
+        annotations={
+            "title": "Analyze CPU Usage",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def analyze_cpu_usage(
         database_id: str,
         hours_back: int = 24,
@@ -687,7 +782,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_analyze_memory",
+        annotations={
+            "title": "Analyze Memory Usage",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def analyze_memory_usage(
         database_id: str,
         hours_back: int = 24,
@@ -774,7 +878,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_analyze_io",
+        annotations={
+            "title": "Analyze I/O Performance",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def analyze_io_performance(
         database_id: str,
         hours_back: int = 24,
@@ -855,7 +968,16 @@ def register_tools(mcp: "FastMCP") -> None:
             _fetch,
         )
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_get_performance_summary",
+        annotations={
+            "title": "Get Performance Summary",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def get_performance_summary(
         database_id: str,
         hours_back: int = 24,
@@ -916,7 +1038,16 @@ def register_tools(mcp: "FastMCP") -> None:
     # TIER 2: Cost Optimization Skills
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_find_cost_opportunities",
+        annotations={
+            "title": "Find Cost Opportunities",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def find_cost_opportunities(
         compartment_id: Optional[str] = None,
         min_savings_usd: float = 0,
@@ -991,7 +1122,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "opportunities": opportunities[:20],  # Limit response size
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_get_savings_summary",
+        annotations={
+            "title": "Get Savings Summary",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def get_savings_summary(
         compartment_id: Optional[str] = None,
         profile: Optional[str] = None,
@@ -1042,7 +1182,16 @@ def register_tools(mcp: "FastMCP") -> None:
     # TIER 2: OPSI API Tools
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_list_insights",
+        annotations={
+            "title": "List Database Insights",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": True,
+        },
+    )
     async def list_database_insights(
         compartment_id: Optional[str] = None,
         status: Optional[str] = None,
@@ -1115,7 +1264,16 @@ def register_tools(mcp: "FastMCP") -> None:
     # AI Agent Support Tools
     # =========================================================================
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_list_skills",
+        annotations={
+            "title": "List OPSI Skills",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def list_opsi_skills() -> Dict[str, Any]:
         """List all available OPSI skills with metadata for AI agents.
 
@@ -1145,7 +1303,16 @@ def register_tools(mcp: "FastMCP") -> None:
             "skills": sorted(skills, key=lambda x: x["tier"]),
         }
 
-    @mcp.tool()
+    @mcp.tool(
+        name="oci_opsi_get_skill_recommendations",
+        annotations={
+            "title": "Get Skill Recommendations",
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     async def get_skill_recommendations(
         query: str,
     ) -> Dict[str, Any]:
