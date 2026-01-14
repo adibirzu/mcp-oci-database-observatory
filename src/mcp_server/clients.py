@@ -315,29 +315,55 @@ class OCIClientManager:
 # SQLcl client management (separate from OCI SDK)
 _sqlcl_client = None
 _sqlcl_lock = asyncio.Lock()
+_sqlcl_config: Dict[str, Any] = {}
 
 
-async def get_sqlcl_client(timeout: float = 120.0):
+async def get_sqlcl_client(
+    timeout: float = 120.0,
+    home_dir: Optional[str] = None,
+    restriction_level: Optional[int] = None,
+) -> Any:
     """Get or create shared SQLcl MCP client.
 
     Reuses connection to avoid Java startup overhead.
 
     Args:
         timeout: Connection timeout in seconds
+        home_dir: Custom SQLcl home directory for isolated configs.
+                 Use this to limit which database connections are available.
+                 Defaults to SQLCL_HOME env var or standard location.
+        restriction_level: SQLcl restriction level (0-2) passed via -R flag.
+                          0: Full access (default)
+                          1: No file system access (spool, @script disabled)
+                          2: No file system or environment access (most secure)
 
     Returns:
         Connected MCPClient for SQLcl
     """
-    global _sqlcl_client
+    global _sqlcl_client, _sqlcl_config
+
+    # Check if config changed - need new client
+    new_config = {
+        "home_dir": home_dir or os.getenv("SQLCL_HOME"),
+        "restriction_level": restriction_level,
+    }
 
     async with _sqlcl_lock:
+        # Check if existing client matches config and is connected
         if _sqlcl_client is not None:
-            try:
-                # Check if still connected
-                if hasattr(_sqlcl_client, "is_connected") and _sqlcl_client.is_connected:
-                    return _sqlcl_client
-            except Exception:
-                pass
+            if _sqlcl_config == new_config:
+                try:
+                    if hasattr(_sqlcl_client, "is_connected") and _sqlcl_client.is_connected:
+                        return _sqlcl_client
+                except Exception:
+                    pass
+            else:
+                # Config changed, disconnect old client
+                try:
+                    await _sqlcl_client.disconnect()
+                except Exception:
+                    pass
+                _sqlcl_client = None
 
         # Import MCP client
         try:
@@ -353,6 +379,22 @@ async def get_sqlcl_client(timeout: float = 120.0):
         if not os.path.exists(sqlcl_path):
             raise RuntimeError(f"SQLcl not found at {sqlcl_path}")
 
+        # Build command args
+        args = ["-mcp"]
+
+        # Add restriction level flag (new SQLcl MCP feature)
+        if restriction_level is not None:
+            if restriction_level not in (0, 1, 2):
+                raise ValueError("restriction_level must be 0, 1, or 2")
+            args.extend(["-R", str(restriction_level)])
+
+        # Add custom home directory (new SQLcl MCP feature)
+        effective_home = home_dir or os.getenv("SQLCL_HOME")
+        if effective_home:
+            if not os.path.isdir(effective_home):
+                raise RuntimeError(f"SQLcl home directory not found: {effective_home}")
+            args.extend(["-home", effective_home])
+
         # Java options for better startup
         env = {
             "_JAVA_OPTIONS": "--enable-native-access=ALL-UNNAMED",
@@ -365,7 +407,7 @@ async def get_sqlcl_client(timeout: float = 120.0):
 
         transport = StdioTransport(
             command=sqlcl_path,
-            args=["-mcp"],
+            args=args,
             env=env,
         )
         client = MCPClient("sqlcl", transport)
@@ -373,6 +415,7 @@ async def get_sqlcl_client(timeout: float = 120.0):
         try:
             await asyncio.wait_for(client.connect(), timeout=timeout)
             _sqlcl_client = client
+            _sqlcl_config = new_config
             return client
         except asyncio.TimeoutError:
             raise RuntimeError(

@@ -41,7 +41,11 @@
       "transport": "stdio",
       "command": "${SQLCL_PATH}",
       "args": ["-mcp"],
-      "description": "Oracle database connections, SQL execution"
+      "env": {
+        "SQLCL_HOME": "${SQLCL_HOME}",
+        "SQLCL_RESTRICTION_LEVEL": "${SQLCL_RESTRICTION_LEVEL}"
+      },
+      "description": "Oracle database connections, SQL execution with async query support"
     }
   ],
   "tool_ttl_overrides": {
@@ -58,8 +62,30 @@
       "ttl_seconds": 600
     },
     "realtime": {
-      "tools": ["ping", "health", "run-sql", "connect", "disconnect"],
+      "tools": [
+        "ping", "health", "run-sql", "connect", "disconnect",
+        "job-status", "job-result", "job-cancel"
+      ],
       "ttl_seconds": 0
+    }
+  },
+  "sqlcl_features": {
+    "async_queries": {
+      "enabled": true,
+      "max_concurrent": 5,
+      "job_ttl_seconds": 3600,
+      "description": "Execute long-running queries in background with job_id tracking"
+    },
+    "restriction_levels": {
+      "description": "Security restriction levels for SQLcl MCP server",
+      "levels": {
+        "0": "Full access (default)",
+        "1": "No file system access (spool, @script disabled)",
+        "2": "No file system or environment access (most secure)"
+      }
+    },
+    "custom_home": {
+      "description": "Use SQLCL_HOME env var to specify isolated config directory"
     }
   }
 }
