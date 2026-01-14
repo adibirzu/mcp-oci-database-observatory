@@ -4,6 +4,7 @@ All secrets are sourced from .env.local (dev) or OCI Vault (prod).
 See documentation placeholders: [Link to Secure Variable: VAR_NAME]
 """
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,11 +12,62 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _find_env_file() -> str | None:
+    """Find .env.local file from multiple candidate locations.
+
+    Searches in order:
+    1. OCI_ENV_FILE environment variable (explicit override)
+    2. Current working directory
+    3. Project root (relative to this file)
+    4. Parent directories up to 3 levels
+    5. Common development locations
+
+    Returns:
+        Path to .env.local if found, None otherwise
+    """
+    # 1. Explicit override via environment variable
+    explicit_path = os.getenv("OCI_ENV_FILE")
+    if explicit_path:
+        expanded = Path(explicit_path).expanduser()
+        if expanded.exists():
+            return str(expanded)
+
+    # 2. Current working directory
+    cwd_env = Path.cwd() / ".env.local"
+    if cwd_env.exists():
+        return str(cwd_env)
+
+    # 3. Project root (this file is at src/core/config.py)
+    project_root = Path(__file__).parent.parent.parent / ".env.local"
+    if project_root.exists():
+        return str(project_root)
+
+    # 4. Search parent directories (up to 3 levels from cwd)
+    current = Path.cwd()
+    for _ in range(3):
+        parent_env = current.parent / ".env.local"
+        if parent_env.exists():
+            return str(parent_env)
+        current = current.parent
+
+    # 5. Common development locations
+    common_paths = [
+        Path.home() / "dev" / "oci-coordinator" / ".env.local",
+        Path.home() / "dev" / "oci-database-observatory" / ".env.local",
+        Path.home() / ".oci" / ".env.local",
+    ]
+    for path in common_paths:
+        if path.exists():
+            return str(path)
+
+    return None
+
+
 class Settings(BaseSettings):
     """Application settings with environment variable binding."""
 
     model_config = SettingsConfigDict(
-        env_file=".env.local",
+        env_file=_find_env_file(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

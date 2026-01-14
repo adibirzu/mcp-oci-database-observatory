@@ -41,6 +41,8 @@ class OCIConfig:
     region: str
     tenancy_id: str
     compartment_id: Optional[str] = None
+    dbmgmt_compartment_id: Optional[str] = None
+    opsi_compartment_id: Optional[str] = None
 
 
 class OCIClientManager:
@@ -64,7 +66,7 @@ class OCIClientManager:
             profile: OCI profile name
 
         Returns:
-            OCIConfig instance
+            OCIConfig instance with profile-specific compartments
         """
         oci = _get_oci()
 
@@ -74,8 +76,29 @@ class OCIClientManager:
         # Get region from env or config
         region = os.getenv("OCI_REGION") or config.get("region")
 
-        # Get compartment from env or use tenancy
-        compartment_id = os.getenv("OCI_COMPARTMENT_ID") or config.get("tenancy")
+        # Profile-specific environment variable lookup
+        # Converts profile name to uppercase for env var lookup
+        # e.g., "PRODUCTION" -> OCI_PRODUCTION_DBMGMT_COMPARTMENT_ID
+        profile_upper = profile.upper().replace("-", "_")
+
+        # Get profile-specific DB Management compartment
+        dbmgmt_compartment_id = (
+            os.getenv(f"OCI_{profile_upper}_DBMGMT_COMPARTMENT_ID") or
+            os.getenv("OCI_DBMGMT_COMPARTMENT_ID")
+        )
+
+        # Get profile-specific OPSI compartment
+        opsi_compartment_id = (
+            os.getenv(f"OCI_{profile_upper}_OPSI_COMPARTMENT_ID") or
+            os.getenv("OCI_OPSI_COMPARTMENT_ID")
+        )
+
+        # Get general compartment: profile-specific -> generic -> tenancy
+        compartment_id = (
+            os.getenv(f"OCI_{profile_upper}_COMPARTMENT_ID") or
+            os.getenv("OCI_COMPARTMENT_ID") or
+            config.get("tenancy")
+        )
 
         return OCIConfig(
             config=config,
@@ -83,6 +106,8 @@ class OCIClientManager:
             region=region,
             tenancy_id=config.get("tenancy"),
             compartment_id=compartment_id,
+            dbmgmt_compartment_id=dbmgmt_compartment_id or compartment_id,
+            opsi_compartment_id=opsi_compartment_id or compartment_id,
         )
 
     async def get_config(self, profile: str = "DEFAULT") -> OCIConfig:
