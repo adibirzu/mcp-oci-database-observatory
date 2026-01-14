@@ -23,12 +23,44 @@ if TYPE_CHECKING:
 from ..clients import get_oci_manager
 
 
-# Default compartment for PRODUCTION DB Management
-PRODUCTION_DBMGMT_COMPARTMENT = os.getenv(
-    "OCI_PRODUCTION_DBMGMT_COMPARTMENT_ID",
-    "ocid1.compartment.oc1..example"
-)
-PRODUCTION_DBMGMT_REGION = os.getenv("OCI_PRODUCTION_DBMGMT_REGION", "us-ashburn-1")
+async def _get_dbmgmt_compartment(profile: str = "DEFAULT") -> str:
+    """Get the DB Management compartment for a profile.
+
+    Uses the profile-specific compartment from environment variables,
+    loaded via OCIConfig.
+
+    Args:
+        profile: OCI profile name
+
+    Returns:
+        Compartment OCID for DB Management operations
+    """
+    manager = get_oci_manager()
+    config = await manager.get_config(profile)
+    return config.dbmgmt_compartment_id
+
+
+def _get_region(profile: str = "DEFAULT", region_override: str | None = None) -> str:
+    """Get the region for DB Management operations.
+
+    Args:
+        profile: OCI profile name
+        region_override: Optional explicit region
+
+    Returns:
+        Region identifier
+    """
+    if region_override:
+        return region_override
+
+    # Try profile-specific region, then generic, then default
+    profile_upper = profile.upper().replace("-", "_")
+    return (
+        os.getenv(f"OCI_{profile_upper}_DBMGMT_REGION") or
+        os.getenv("OCI_DBMGMT_REGION") or
+        os.getenv("OCI_REGION") or
+        "us-ashburn-1"
+    )
 
 
 def register_tools(mcp: "FastMCP") -> None:
@@ -41,29 +73,30 @@ def register_tools(mcp: "FastMCP") -> None:
     @mcp.tool()
     async def list_managed_databases(
         compartment_id: Optional[str] = None,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
         region: Optional[str] = None,
         limit: int = 50,
     ) -> str:
         """List databases registered in OCI Database Management.
 
         Args:
-            compartment_id: Compartment OCID (default: PRODUCTION dbmgmt compartment)
-            profile: OCI profile (default: PRODUCTION)
-            region: Region override (default: us-ashburn-1)
+            compartment_id: Compartment OCID (uses profile-specific default if not provided)
+            profile: OCI profile (default: DEFAULT - uses env-configured compartments)
+            region: Region override (uses profile-specific default if not provided)
             limit: Maximum databases to return
 
         Returns:
             JSON with list of managed databases
         """
         manager = get_oci_manager()
+        resolved_region = _get_region(profile, region)
         client = await manager.get_dbm_client(
             profile=profile,
-            region=region or PRODUCTION_DBMGMT_REGION
+            region=resolved_region
         )
-        config = await manager.get_config(profile)
 
-        comp_id = compartment_id or PRODUCTION_DBMGMT_COMPARTMENT
+        # Use profile-specific compartment from env vars if not explicitly provided
+        comp_id = compartment_id or await _get_dbmgmt_compartment(profile)
 
         try:
             def _list():
@@ -107,23 +140,24 @@ def register_tools(mcp: "FastMCP") -> None:
     @mcp.tool()
     async def get_managed_database(
         managed_database_id: str,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
         region: Optional[str] = None,
     ) -> str:
         """Get details of a managed database.
 
         Args:
             managed_database_id: The OCID of the managed database
-            profile: OCI profile
-            region: Region override
+            profile: OCI profile (default: DEFAULT)
+            region: Region override (uses profile-specific default if not provided)
 
         Returns:
             JSON with database details
         """
         manager = get_oci_manager()
+        resolved_region = _get_region(profile, region)
         client = await manager.get_dbm_client(
             profile=profile,
-            region=region or PRODUCTION_DBMGMT_REGION
+            region=resolved_region
         )
 
         try:
@@ -165,7 +199,7 @@ def register_tools(mcp: "FastMCP") -> None:
     @mcp.tool()
     async def list_awr_db_snapshots(
         managed_database_id: str,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
         region: Optional[str] = None,
         hours_back: int = 24,
         limit: int = 100,
@@ -174,8 +208,8 @@ def register_tools(mcp: "FastMCP") -> None:
 
         Args:
             managed_database_id: The OCID of the managed database
-            profile: OCI profile
-            region: Region override
+            profile: OCI profile (default: DEFAULT)
+            region: Region override (uses profile-specific default if not provided)
             hours_back: How many hours of snapshots to retrieve
             limit: Maximum snapshots to return
 
@@ -183,9 +217,10 @@ def register_tools(mcp: "FastMCP") -> None:
             JSON with list of AWR snapshots
         """
         manager = get_oci_manager()
+        resolved_region = _get_region(profile, region)
         client = await manager.get_dbm_client(
             profile=profile,
-            region=region or PRODUCTION_DBMGMT_REGION
+            region=resolved_region
         )
 
         # Calculate time range
@@ -253,7 +288,7 @@ def register_tools(mcp: "FastMCP") -> None:
         managed_database_id: str,
         begin_snapshot_id: int,
         end_snapshot_id: int,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
         region: Optional[str] = None,
         report_format: str = "HTML",
         report_type: str = "AWR",
@@ -268,8 +303,8 @@ def register_tools(mcp: "FastMCP") -> None:
             managed_database_id: The OCID of the managed database
             begin_snapshot_id: Starting AWR snapshot ID
             end_snapshot_id: Ending AWR snapshot ID
-            profile: OCI profile (default: PRODUCTION)
-            region: Region override
+            profile: OCI profile (default: DEFAULT)
+            region: Region override (uses profile-specific default if not provided)
             report_format: HTML or TEXT (default: HTML)
             report_type: AWR, ASH, or ADDM (default: AWR)
             instance_number: RAC instance number (default: 1)
@@ -278,9 +313,10 @@ def register_tools(mcp: "FastMCP") -> None:
             JSON with AWR report content (base64 encoded for HTML)
         """
         manager = get_oci_manager()
+        resolved_region = _get_region(profile, region)
         client = await manager.get_dbm_client(
             profile=profile,
-            region=region or PRODUCTION_DBMGMT_REGION
+            region=resolved_region
         )
 
         try:
@@ -372,7 +408,7 @@ def register_tools(mcp: "FastMCP") -> None:
     @mcp.tool()
     async def get_awr_db_report_auto(
         managed_database_id: str,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
         region: Optional[str] = None,
         hours_back: int = 1,
         report_format: str = "HTML",
@@ -385,8 +421,8 @@ def register_tools(mcp: "FastMCP") -> None:
 
         Args:
             managed_database_id: The OCID of the managed database
-            profile: OCI profile (default: PRODUCTION)
-            region: Region override
+            profile: OCI profile (default: DEFAULT)
+            region: Region override (uses profile-specific default if not provided)
             hours_back: Time range for report (default: 1 hour)
             report_format: HTML or TEXT (default: HTML)
 
@@ -394,9 +430,10 @@ def register_tools(mcp: "FastMCP") -> None:
             JSON with AWR report content
         """
         manager = get_oci_manager()
+        resolved_region = _get_region(profile, region)
         client = await manager.get_dbm_client(
             profile=profile,
-            region=region or PRODUCTION_DBMGMT_REGION
+            region=resolved_region
         )
 
         # Calculate time range
@@ -525,26 +562,28 @@ def register_tools(mcp: "FastMCP") -> None:
     @mcp.tool()
     async def get_database_fleet_health(
         compartment_id: Optional[str] = None,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
         region: Optional[str] = None,
     ) -> str:
         """Get fleet health metrics for managed databases.
 
         Args:
-            compartment_id: Compartment OCID (default: PRODUCTION dbmgmt compartment)
-            profile: OCI profile (default: PRODUCTION)
-            region: Region override
+            compartment_id: Compartment OCID (uses profile-specific default if not provided)
+            profile: OCI profile (default: DEFAULT)
+            region: Region override (uses profile-specific default if not provided)
 
         Returns:
             JSON with fleet health metrics
         """
         manager = get_oci_manager()
+        resolved_region = _get_region(profile, region)
         client = await manager.get_dbm_client(
             profile=profile,
-            region=region or PRODUCTION_DBMGMT_REGION
+            region=resolved_region
         )
 
-        comp_id = compartment_id or PRODUCTION_DBMGMT_COMPARTMENT
+        # Use profile-specific compartment from env vars if not explicitly provided
+        comp_id = compartment_id or await _get_dbmgmt_compartment(profile)
 
         try:
             def _get_health():
@@ -595,7 +634,7 @@ def register_tools(mcp: "FastMCP") -> None:
     async def search_managed_databases(
         name_contains: str,
         compartment_id: Optional[str] = None,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
         region: Optional[str] = None,
         limit: int = 20,
     ) -> str:
@@ -603,21 +642,23 @@ def register_tools(mcp: "FastMCP") -> None:
 
         Args:
             name_contains: Substring to search for in database name
-            compartment_id: Compartment OCID (default: PRODUCTION dbmgmt compartment)
-            profile: OCI profile (default: PRODUCTION)
-            region: Region override
+            compartment_id: Compartment OCID (uses profile-specific default if not provided)
+            profile: OCI profile (default: DEFAULT)
+            region: Region override (uses profile-specific default if not provided)
             limit: Maximum results
 
         Returns:
             JSON with matching databases
         """
         manager = get_oci_manager()
+        resolved_region = _get_region(profile, region)
         client = await manager.get_dbm_client(
             profile=profile,
-            region=region or PRODUCTION_DBMGMT_REGION
+            region=resolved_region
         )
 
-        comp_id = compartment_id or PRODUCTION_DBMGMT_COMPARTMENT
+        # Use profile-specific compartment from env vars if not explicitly provided
+        comp_id = compartment_id or await _get_dbmgmt_compartment(profile)
 
         try:
             def _search():
