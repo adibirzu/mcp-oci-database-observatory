@@ -21,6 +21,28 @@ if TYPE_CHECKING:
 from ..clients import get_oci_manager
 from ..cache import cached_call
 
+def _retry_query(client, namespace, comp_id, query, start_time, end_time, max_count):
+    """Retry a query execution (used by LLM repair). Returns response.data or None."""
+    try:
+        from oci.log_analytics.models import QueryDetails, TimeRange
+        qd = QueryDetails(
+            compartment_id=comp_id,
+            compartment_id_in_subtree=True,
+            query_string=query,
+            sub_system="LOG",
+            max_total_count=max_count,
+            time_filter=TimeRange(
+                time_start=start_time,
+                time_end=end_time,
+                time_zone="UTC",
+            ),
+        )
+        response = client.query(namespace_name=namespace, query_details=qd)
+        return response.data
+    except Exception:
+        return None
+
+
 # Security query templates for common use cases
 SECURITY_QUERIES = {
     "failed_logins": "Severity = 'error' AND Message =~ 'login|authentication|auth' AND Message =~ 'fail|denied|invalid' | stats count as failures by 'Entity Name', 'Log Source' | sort -failures",
@@ -83,6 +105,10 @@ def register_tools(mcp: "FastMCP") -> None:
         Returns:
             Query results or error
         """
+        # Apply field corrections before execution
+        from .logan_ai import fix_query_fields
+        query = fix_query_fields(query)
+
         # Note: Logging Analytics queries are always fresh, minimal caching
         manager = get_oci_manager()
         profile_name = profile or "DEFAULT"
@@ -99,24 +125,20 @@ def register_tools(mcp: "FastMCP") -> None:
             start_time = end_time - timedelta(minutes=time_range_minutes)
 
             def _call_api():
-                # Build query details
-                query_details = {
-                    "compartment_id": comp_id,
-                    "compartment_id_in_subtree": True,
-                    "query_string": query,
-                    "sub_system": "LOG",
-                    "max_total_count": max_count,
-                    "time_filter": {
-                        "time_start": start_time.isoformat().replace('+00:00', 'Z'),
-                        "time_end": end_time.isoformat().replace('+00:00', 'Z'),
-                        "time_zone": "UTC",
-                    },
-                }
+                from oci.log_analytics.models import QueryDetails, TimeRange
 
-                # Use the SDK's query method
-                from oci.log_analytics.models import QueryDetails
-
-                qd = QueryDetails(**query_details)
+                qd = QueryDetails(
+                    compartment_id=comp_id,
+                    compartment_id_in_subtree=True,
+                    query_string=query,
+                    sub_system="LOG",
+                    max_total_count=max_count,
+                    time_filter=TimeRange(
+                        time_start=start_time,
+                        time_end=end_time,
+                        time_zone="UTC",
+                    ),
+                )
                 response = client.query(
                     namespace_name=namespace,
                     query_details=qd,
@@ -134,9 +156,12 @@ def register_tools(mcp: "FastMCP") -> None:
 
             if hasattr(result, 'items') and result.items:
                 for item in result.items[:max_count]:
-                    if hasattr(item, 'row'):
+                    if isinstance(item, dict):
+                        # Convert dict to ordered list matching column order
+                        rows.append([item.get(col, None) for col in columns])
+                    elif hasattr(item, 'row'):
                         rows.append(item.row)
-                    elif isinstance(item, dict):
+                    else:
                         rows.append(item)
 
             return {
@@ -154,11 +179,62 @@ def register_tools(mcp: "FastMCP") -> None:
             }
 
         except Exception as e:
+            error_str = str(e)
+
+            # Attempt LLM repair for field/syntax errors
+            repairable = any(
+                p in error_str.lower()
+                for p in ["invalidparameter", "invalid field", "unexpected input", "syntax error"]
+            )
+            if repairable:
+                try:
+                    from .logan_ai import llm_repair_query, fix_query_fields as _fix
+                    repaired = await llm_repair_query(query, error_str)
+                    if repaired:
+                        repaired = _fix(repaired)
+                        # Retry with repaired query (one attempt only)
+                        retry_result = await asyncio.to_thread(
+                            lambda: _retry_query(client, namespace, comp_id, repaired, start_time, end_time, max_count)
+                        )
+                        if retry_result is not None:
+                            columns = []
+                            rows = []
+                            if hasattr(retry_result, 'columns') and retry_result.columns:
+                                columns = [col.display_name for col in retry_result.columns]
+                            if hasattr(retry_result, 'items') and retry_result.items:
+                                for item in retry_result.items[:max_count]:
+                                    if isinstance(item, dict):
+                                        rows.append([item.get(col, None) for col in columns])
+                                    elif hasattr(item, 'row'):
+                                        rows.append(item.row)
+                                    else:
+                                        rows.append(item)
+                            return {
+                                "success": True,
+                                "profile": profile_name,
+                                "query": repaired,
+                                "time_range": {
+                                    "start": str(start_time),
+                                    "end": str(end_time),
+                                    "minutes": time_range_minutes,
+                                },
+                                "result_count": len(rows),
+                                "columns": columns,
+                                "rows": rows[:50],
+                                "logan_ai_repair": {
+                                    "original_query": query,
+                                    "original_error": error_str,
+                                    "repaired_query": repaired,
+                                },
+                            }
+                except Exception:
+                    pass  # LLM repair failed — fall through to original error
+
             return {
                 "success": False,
-                "error": str(e),
+                "error": error_str,
                 "query": query,
-                "hint": "Check query syntax. Use Logan syntax like: * | stats count by 'Log Source'",
+                "hint": "Check query syntax. Use oci_logan_ask for AI-assisted queries, or oci_logan_get_field_info for valid field names.",
             }
 
     @mcp.tool(
@@ -873,38 +949,43 @@ def register_tools(mcp: "FastMCP") -> None:
         Returns:
             Suggested query with explanation
         """
+        from .logan_ai import match_nl_question, NL_TEMPLATES
+
         intent_lower = intent.lower()
         suggestions = []
 
-        # Pattern matching for common intents
-        patterns = [
-            (["error", "fail", "exception"], "Severity = 'error' | stats count by 'Log Source', Message | top 20 count"),
-            (["login", "auth", "authentication"], "Message =~ 'login|auth|credential' | stats count by 'Entity Name', Message | top 20 count"),
-            (["database", "oracle", "db"], "'Log Source' =~ 'Oracle|Database|DB' | stats count by 'Log Source', Severity | sort -count"),
-            (["security", "threat", "attack"], "Severity IN ('error', 'critical', 'warning') AND Message =~ 'attack|threat|malicious|unauthorized' | stats count by Message | top 20 count"),
-            (["network", "connection", "firewall"], "'Log Source' =~ 'Network|Firewall|VCN' | stats count by 'Entity Name', Severity | sort -count"),
-            (["audit", "compliance", "activity"], "'Log Source' = 'OCI Audit Logs' | stats count by 'User Name', 'Request Action' | sort -count"),
-            (["performance", "slow", "latency"], "Message =~ 'slow|timeout|latency|performance' | stats count by 'Log Source', 'Entity Name' | sort -count"),
-            (["top", "most", "volume"], "* | stats count as logs by 'Log Source' | sort -logs | head 20"),
-        ]
+        # Use LoganAI templates (verified against live API)
+        match = match_nl_question(intent)
+        if match:
+            suggestions.append({
+                "query": match["query"],
+                "matched_keywords": [kw for kw in match["keywords"] if kw in intent_lower],
+                "description": match["description"],
+                "time_range": match.get("time_range", "24h"),
+            })
 
-        for keywords, query in patterns:
-            if any(kw in intent_lower for kw in keywords):
+        # Also check other templates for related suggestions
+        for template in NL_TEMPLATES:
+            if template == match:
+                continue
+            score = sum(1 for kw in template["keywords"] if kw in intent_lower)
+            if score > 0:
                 suggestions.append({
-                    "query": query,
-                    "matched_keywords": [kw for kw in keywords if kw in intent_lower],
-                    "description": f"Query matching: {', '.join(keywords)}",
+                    "query": template["query"],
+                    "matched_keywords": [kw for kw in template["keywords"] if kw in intent_lower],
+                    "description": template["description"],
+                    "time_range": template.get("time_range", "24h"),
                 })
 
-        # Add generic suggestions if no specific match
+        # Fallback suggestions
         if not suggestions:
             suggestions = [
                 {
-                    "query": "* | stats count by 'Log Source' | sort -count",
+                    "query": "* | stats count as logrecords by 'Log Source' | sort -logrecords",
                     "description": "Count logs by source",
                 },
                 {
-                    "query": f"Message =~ '{intent.split()[0]}' | stats count by Message | top 20 count",
+                    "query": f"Message like '%{intent.split()[0]}%' | stats count by 'Log Source' | sort -count",
                     "description": f"Search for '{intent.split()[0]}' in messages",
                 },
             ]
@@ -913,11 +994,13 @@ def register_tools(mcp: "FastMCP") -> None:
             "success": True,
             "intent": intent,
             "suggestions": suggestions[:5],
+            "hint": "Use oci_logan_ask to execute these queries directly with natural language",
             "syntax_help": {
-                "filter": "Use = for exact match, =~ for regex",
+                "filter": "Use = for exact, like '%pattern%' for wildcard",
                 "aggregate": "Use | stats count by 'Field Name'",
                 "sort": "Use | sort -field for descending",
-                "limit": "Use | head N or | top N field",
+                "limit": "Use | head N for top results",
+                "important": "ALL fields with spaces MUST be single-quoted: 'Source IP' not SourceIP",
             },
         }
 

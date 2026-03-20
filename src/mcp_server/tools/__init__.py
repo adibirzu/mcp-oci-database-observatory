@@ -85,14 +85,17 @@ def register_all_tools(mcp: "FastMCP") -> None:
     Args:
         mcp: FastMCP server instance
     """
-    from . import sqlcl, opsi, logan, tenancy, dbmgmt
+    from . import sqlcl, opsi, logan, logan_ai, tenancy, dbmgmt, compliance, iso42001
 
     # Each module has a register_tools(mcp) function
     sqlcl.register_tools(mcp)
     opsi.register_tools(mcp)
     logan.register_tools(mcp)
+    logan_ai.register_tools(mcp)  # LoganAI: NL→OCL, field fixes, templates
     tenancy.register_tools(mcp)
     dbmgmt.register_tools(mcp)  # DB Management with AWR support
+    compliance.register_tools(mcp)  # CIS compliance scanning
+    iso42001.register_tools(mcp)  # ISO 42001 AI governance
 
     # Wrap all registered tools with tracing
     if _tracing_available:
