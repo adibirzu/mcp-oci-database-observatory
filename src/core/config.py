@@ -144,7 +144,10 @@ class Settings(BaseSettings):
 
     # MCP Servers
     opsi_http_url: str = Field(default="http://localhost:8000/mcp")
-    logan_http_url: str = Field(default="http://localhost:8001/mcp")
+    logan_http_url: str = Field(
+        default="http://localhost:8001/mcp",
+        description="Canonical OCI Log Analytics MCP endpoint",
+    )
     oci_mcp_http_url: str = Field(default="http://localhost:8002/mcp")
     mysql_mcp_url: str = Field(default="http://localhost:8003/mcp")
     postgres_mcp_url: str = Field(default="http://localhost:8004/mcp")

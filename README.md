@@ -26,13 +26,7 @@ observatory-dev
 
 ## Environment Configuration
 
-Copy the environment file from the oracle-db-autonomous-agent project:
-
-```bash
-cp /Users/abirzu/dev/oracle-db-autonomous-agent/.env.local /Users/abirzu/dev/oci-database-observatory/.env.local
-```
-
-Or create a new one from the template:
+Create from the template:
 
 ```bash
 cp .env.example .env.local
@@ -69,14 +63,15 @@ cp .env.example .env.local
 
 ```
 src/
-├── api/          # FastAPI server
-├── agents/       # Multi-agent system
-├── llm/          # LLM router with fallback
-├── mcp/          # MCP client infrastructure
-├── mcp_server/   # FastMCP server (OPSI, SQLcl, Logan, Tenancy tools)
-├── observability/# OCI APM/OTEL + OCI Logging
-├── cache/        # Redis + file-based caching
-└── core/         # Config, types, errors
+├── api/          # FastAPI server & routes
+├── agents/       # Multi-agent system (coordinator, oracle, mysql, postgres)
+├── llm/          # LLM router with task-based provider selection
+├── mcp/          # MCP client infrastructure (registry, executor, converter)
+├── mcp_server/   # FastMCP server (OPSI, SQLcl, Logan, DB Management, Tenancy)
+├── observability/# OCI APM/OTEL + OCI Logging with trace correlation
+├── logging/      # Structured logging with correlation IDs
+├── cache/        # Redis + in-memory caching with TTL tiers
+└── core/         # Config, types, errors, logging setup
 ```
 
 ## Documentation
@@ -89,14 +84,15 @@ src/
 
 ## MCP Server Tools
 
-The MCP server provides 33+ tools across 4 categories:
+The MCP server provides 53 tools across 5 categories:
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| **OPSI** | 15 | Database monitoring, performance analysis, cost optimization |
-| **SQLcl** | 6 | Direct database operations, SQL execution |
-| **Logan** | 8 | Log analytics queries, source discovery |
-| **Tenancy** | 4 | Multi-tenancy profile management |
+| **OPSI** | 15 | Database monitoring, performance analysis, cost optimization, skills |
+| **Logan** | 13 | Log analytics queries, security analysis, anomaly detection, entity logs |
+| **SQLcl** | 10 | SQL execution, schema, connections, async jobs, network check |
+| **Tenancy** | 8 | Profile management, compartments, health check, cache, ping |
+| **DB Management** | 7 | Managed databases, AWR snapshots/reports, fleet health, search |
 
 ### Key Features
 

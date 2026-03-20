@@ -199,8 +199,8 @@ class LangGraphCoordinator:
                     "tool_calls": [],
                 }
 
-    def _action_node(self, state: CoordinatorState) -> dict:
-        """Execute pending tool calls.
+    async def _action_node(self, state: CoordinatorState) -> dict:
+        """Execute pending tool calls via MCP clients.
 
         Args:
             state: Current state
@@ -226,7 +226,6 @@ class LangGraphCoordinator:
                 logger.debug("Executing tool", tool=tool_name)
 
                 try:
-                    # Execute via tool catalog
                     tool_def = self.tool_catalog.get_tool(tool_name)
                     if not tool_def:
                         results.append({
@@ -237,7 +236,6 @@ class LangGraphCoordinator:
                         })
                         continue
 
-                    # Get the client and execute
                     client = self.tool_catalog.registry.get_client(tool_def.server_id)
                     if not client:
                         results.append({
@@ -248,12 +246,11 @@ class LangGraphCoordinator:
                         })
                         continue
 
-                    # This would be async in real usage
-                    # For now, we'll need to handle this appropriately
+                    result = await client.call_tool(tool_def.original_name, arguments)
                     results.append({
                         "tool_call_id": tool_call_id,
                         "tool_name": tool_name,
-                        "result": "Tool execution placeholder",
+                        "result": str(result),
                         "success": True,
                     })
 
@@ -408,8 +405,8 @@ class LangGraphCoordinator:
         self.llm = bound_llm
         return bound_llm
 
-    def _execute_tool(self, tool_name: str, arguments: dict) -> str:
-        """Execute a tool synchronously.
+    async def _execute_tool(self, tool_name: str, arguments: dict) -> str:
+        """Execute a tool asynchronously via MCP client.
 
         Args:
             tool_name: Name of tool to execute
@@ -419,7 +416,7 @@ class LangGraphCoordinator:
             Tool result as string
         """
         if not self.tool_catalog:
-            return f"Error: No tool catalog configured"
+            return "Error: No tool catalog configured"
 
         tool_def = self.tool_catalog.get_tool(tool_name)
         if not tool_def:
@@ -429,18 +426,8 @@ class LangGraphCoordinator:
         if not client:
             return f"Error: Server not available: {tool_def.server_id}"
 
-        # Note: This is a synchronous wrapper - in production,
-        # async execution should be used
-        import asyncio
-
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're already in an async context
-                return f"Tool {tool_name} queued for execution"
-            result = loop.run_until_complete(
-                client.call_tool(tool_def.original_name, arguments)
-            )
+            result = await client.call_tool(tool_def.original_name, arguments)
             return str(result)
         except Exception as e:
             return f"Error executing {tool_name}: {e}"

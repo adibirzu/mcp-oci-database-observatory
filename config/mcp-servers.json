@@ -9,10 +9,10 @@
     },
     {
       "id": "oci-logan",
-      "name": "OCI Logging Analytics",
+      "name": "Canonical OCI Logging Analytics",
       "transport": "http",
       "url": "${LOGAN_HTTP_URL}",
-      "description": "Log search, MITRE analysis, security events"
+      "description": "Canonical OCI Logging Analytics MCP server for real-data Logan queries and security analytics"
     },
     {
       "id": "oci-mcp",

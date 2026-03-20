@@ -10,7 +10,6 @@ Multi-tenancy: All tools accept optional 'profile' parameter.
 """
 
 import asyncio
-import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -18,30 +17,78 @@ from typing import Any, Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
-from ..clients import get_oci_manager
+from src.core import settings
+
 from ..cache import cached_call
 
-def _retry_query(client, namespace, comp_id, query, start_time, end_time, max_count):
-    """Retry a query execution (used by LLM repair). Returns response.data or None."""
-    try:
-        from oci.log_analytics.models import QueryDetails, TimeRange
-        qd = QueryDetails(
-            compartment_id=comp_id,
-            compartment_id_in_subtree=True,
-            query_string=query,
-            sub_system="LOG",
-            max_total_count=max_count,
-            time_filter=TimeRange(
-                time_start=start_time,
-                time_end=end_time,
-                time_zone="UTC",
-            ),
-        )
-        response = client.query(namespace_name=namespace, query_details=qd)
-        return response.data
-    except Exception:
-        return None
+CANONICAL_EXECUTION_NOTE = (
+    "Executed via the canonical OCI Log Analytics MCP server. "
+    "This path is restricted to real OCI Log Analytics data."
+)
 
+
+def _minutes_to_time_range(minutes: int) -> str:
+    total_minutes = max(minutes, 1)
+    if total_minutes % 1440 == 0:
+        return f"{total_minutes // 1440}d"
+    if total_minutes % 60 == 0:
+        return f"{total_minutes // 60}h"
+    return f"{total_minutes}m"
+
+
+async def _call_canonical(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Call the canonical Logan MCP server over HTTP and normalize the result."""
+    import httpx
+
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments,
+        },
+        "id": 1,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(180.0)) as client:
+            response = await client.post(settings.logan_http_url.rstrip("/"), json=payload)
+            response.raise_for_status()
+    except Exception as exc:
+        return {"success": False, "error": f"Canonical Logan MCP request failed: {exc}"}
+
+    result = response.json()
+    if "error" in result:
+        return {"success": False, "error": f"Canonical Logan MCP error: {result['error']}"}
+
+    content = result.get("result", {}).get("content", [])
+    text = None
+    if isinstance(content, list):
+        text = next((item.get("text") for item in content if item.get("type") == "text"), None)
+    if text is None:
+        raw_result = result.get("result")
+        if isinstance(raw_result, dict):
+            return raw_result
+        return {"success": False, "error": "Canonical Logan MCP returned no text payload"}
+
+    try:
+        parsed = json.loads(text)
+    except Exception:
+        return {"success": True, "raw": text}
+
+    if isinstance(parsed, dict):
+        return parsed
+    return {"success": True, "result": parsed}
+
+
+def _rows_from_results(results: List[Dict[str, Any]], max_count: int) -> tuple[List[str], List[List[Any]]]:
+    columns: List[str] = []
+    for item in results:
+        for key in item:
+            if key not in columns:
+                columns.append(key)
+    rows = [[item.get(column) for column in columns] for item in results[:max_count]]
+    return columns, rows
 
 # Security query templates for common use cases
 SECURITY_QUERIES = {
@@ -63,11 +110,6 @@ QUERY_PATTERNS = {
 
 def register_tools(mcp: "FastMCP") -> None:
     """Register Logan tools with the MCP server."""
-
-    async def _get_namespace(profile: str) -> str:
-        """Get tenancy namespace for Logan queries."""
-        manager = get_oci_manager()
-        return await manager.get_namespace(profile)
 
     @mcp.tool(
         name="oci_logan_execute_query",
@@ -105,64 +147,33 @@ def register_tools(mcp: "FastMCP") -> None:
         Returns:
             Query results or error
         """
-        # Apply field corrections before execution
+        profile_name = profile or "DEFAULT"
         from .logan_ai import fix_query_fields
         query = fix_query_fields(query)
 
-        # Note: Logging Analytics queries are always fresh, minimal caching
-        manager = get_oci_manager()
-        profile_name = profile or "DEFAULT"
-
         try:
-            config = await manager.get_config(profile_name)
-            client = await manager.get_logan_client(profile_name)
-            namespace = await _get_namespace(profile_name)
+            canonical = await _call_canonical(
+                "oci_logan_execute_query",
+                {
+                    "query": query,
+                    "timeRange": _minutes_to_time_range(time_range_minutes),
+                    "limit": max_count,
+                    "compartmentId": compartment_id or "",
+                    "format": "json",
+                },
+            )
+            if canonical.get("error"):
+                return {
+                    "success": False,
+                    "error": canonical["error"],
+                    "query": query,
+                    "hint": "Ensure the canonical Logan MCP server is reachable at LOGAN_HTTP_URL.",
+                }
 
-            comp_id = compartment_id or config.compartment_id
-
-            # Calculate time range
+            results = canonical.get("results", []) or []
+            columns, rows = _rows_from_results(results, max_count)
             end_time = datetime.now(timezone.utc)
             start_time = end_time - timedelta(minutes=time_range_minutes)
-
-            def _call_api():
-                from oci.log_analytics.models import QueryDetails, TimeRange
-
-                qd = QueryDetails(
-                    compartment_id=comp_id,
-                    compartment_id_in_subtree=True,
-                    query_string=query,
-                    sub_system="LOG",
-                    max_total_count=max_count,
-                    time_filter=TimeRange(
-                        time_start=start_time,
-                        time_end=end_time,
-                        time_zone="UTC",
-                    ),
-                )
-                response = client.query(
-                    namespace_name=namespace,
-                    query_details=qd,
-                )
-                return response.data
-
-            result = await asyncio.to_thread(_call_api)
-
-            # Parse query results
-            columns = []
-            rows = []
-
-            if hasattr(result, 'columns') and result.columns:
-                columns = [col.display_name for col in result.columns]
-
-            if hasattr(result, 'items') and result.items:
-                for item in result.items[:max_count]:
-                    if isinstance(item, dict):
-                        # Convert dict to ordered list matching column order
-                        rows.append([item.get(col, None) for col in columns])
-                    elif hasattr(item, 'row'):
-                        rows.append(item.row)
-                    else:
-                        rows.append(item)
 
             return {
                 "success": True,
@@ -175,67 +186,20 @@ def register_tools(mcp: "FastMCP") -> None:
                 },
                 "result_count": len(rows),
                 "columns": columns,
-                "rows": rows[:50],  # Limit response size
+                "rows": rows[:50],
+                "canonical_server": settings.logan_http_url,
+                "execution_note": CANONICAL_EXECUTION_NOTE,
             }
 
         except Exception as e:
-            error_str = str(e)
-
-            # Attempt LLM repair for field/syntax errors
-            repairable = any(
-                p in error_str.lower()
-                for p in ["invalidparameter", "invalid field", "unexpected input", "syntax error"]
-            )
-            if repairable:
-                try:
-                    from .logan_ai import llm_repair_query, fix_query_fields as _fix
-                    repaired = await llm_repair_query(query, error_str)
-                    if repaired:
-                        repaired = _fix(repaired)
-                        # Retry with repaired query (one attempt only)
-                        retry_result = await asyncio.to_thread(
-                            lambda: _retry_query(client, namespace, comp_id, repaired, start_time, end_time, max_count)
-                        )
-                        if retry_result is not None:
-                            columns = []
-                            rows = []
-                            if hasattr(retry_result, 'columns') and retry_result.columns:
-                                columns = [col.display_name for col in retry_result.columns]
-                            if hasattr(retry_result, 'items') and retry_result.items:
-                                for item in retry_result.items[:max_count]:
-                                    if isinstance(item, dict):
-                                        rows.append([item.get(col, None) for col in columns])
-                                    elif hasattr(item, 'row'):
-                                        rows.append(item.row)
-                                    else:
-                                        rows.append(item)
-                            return {
-                                "success": True,
-                                "profile": profile_name,
-                                "query": repaired,
-                                "time_range": {
-                                    "start": str(start_time),
-                                    "end": str(end_time),
-                                    "minutes": time_range_minutes,
-                                },
-                                "result_count": len(rows),
-                                "columns": columns,
-                                "rows": rows[:50],
-                                "logan_ai_repair": {
-                                    "original_query": query,
-                                    "original_error": error_str,
-                                    "repaired_query": repaired,
-                                },
-                            }
-                except Exception:
-                    pass  # LLM repair failed — fall through to original error
-
             return {
                 "success": False,
-                "error": error_str,
+                "error": str(e),
                 "query": query,
-                "hint": "Check query syntax. Use oci_logan_ask for AI-assisted queries, or oci_logan_get_field_info for valid field names.",
+                "hint": "Check canonical Logan MCP connectivity or query syntax.",
             }
+
+    globals()["execute_logan_query"] = execute_logan_query
 
     @mcp.tool(
         name="oci_logan_list_sources",
@@ -268,61 +232,36 @@ def register_tools(mcp: "FastMCP") -> None:
         Returns:
             List of log sources
         """
-
         async def _fetch():
-            manager = get_oci_manager()
             profile_name = profile or "DEFAULT"
+            canonical = await _call_canonical(
+                "oci_logan_list_log_sources",
+                {
+                    "compartmentId": compartment_id or "",
+                    "displayName": display_name or "",
+                    "isSystem": (
+                        "true" if is_system is True else "false" if is_system is False else ""
+                    ),
+                    "limit": limit,
+                    "format": "json",
+                },
+            )
+            if canonical.get("error"):
+                return {"success": False, "error": canonical["error"], "profile": profile_name}
 
-            try:
-                config = await manager.get_config(profile_name)
-                client = await manager.get_logan_client(profile_name)
-                namespace = await _get_namespace(profile_name)
-
-                comp_id = compartment_id or config.compartment_id
-
-                def _call_api():
-                    kwargs = {
-                        "namespace_name": namespace,
-                        "compartment_id": comp_id,
-                        "limit": limit,
-                    }
-
-                    if display_name:
-                        kwargs["name"] = display_name
-                    if source_type:
-                        kwargs["source_type"] = source_type
-                    if is_system is not None:
-                        kwargs["is_system"] = "SYSTEM" if is_system else "CUSTOM"
-
-                    response = client.list_sources(**kwargs)
-                    return response.data.items
-
-                items = await asyncio.to_thread(_call_api)
-
-                sources = []
-                for item in items:
-                    sources.append({
-                        "name": item.name,
-                        "display_name": item.display_name,
-                        "description": item.description[:200] if item.description else None,
-                        "source_type": item.source_type,
-                        "is_system": item.is_system,
-                        "time_updated": str(item.time_updated) if item.time_updated else None,
-                    })
-
-                return {
-                    "success": True,
-                    "profile": profile_name,
-                    "count": len(sources),
-                    "sources": sources,
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "profile": profile_name,
-                }
+            sources = canonical.get("results", []) or []
+            if source_type:
+                sources = [
+                    item for item in sources
+                    if (item.get("source_type") or "").lower() == source_type.lower()
+                ]
+            return {
+                "success": True,
+                "profile": profile_name,
+                "count": len(sources),
+                "sources": sources[:limit],
+                "canonical_server": settings.logan_http_url,
+            }
 
         return await cached_call(
             "list_log_sources",
@@ -361,58 +300,32 @@ def register_tools(mcp: "FastMCP") -> None:
         """
 
         async def _fetch():
-            manager = get_oci_manager()
             profile_name = profile or "DEFAULT"
+            canonical = await _call_canonical(
+                "oci_logan_list_entities",
+                {
+                    "entityType": entity_type or "all",
+                    "compartmentId": compartment_id or "",
+                    "limit": limit,
+                    "format": "json",
+                },
+            )
+            if canonical.get("error"):
+                return {"success": False, "error": canonical["error"], "profile": profile_name}
 
-            try:
-                config = await manager.get_config(profile_name)
-                client = await manager.get_logan_client(profile_name)
-                namespace = await _get_namespace(profile_name)
-
-                comp_id = compartment_id or config.compartment_id
-
-                def _call_api():
-                    kwargs = {
-                        "namespace_name": namespace,
-                        "compartment_id": comp_id,
-                        "limit": limit,
-                    }
-
-                    if entity_type:
-                        kwargs["entity_type_name"] = [entity_type]
-                    if name:
-                        kwargs["name"] = name
-
-                    response = client.list_log_analytics_entities(**kwargs)
-                    return response.data.items
-
-                items = await asyncio.to_thread(_call_api)
-
-                entities = []
-                for item in items:
-                    entities.append({
-                        "id": item.id,
-                        "name": item.name,
-                        "entity_type_name": item.entity_type_name,
-                        "lifecycle_state": item.lifecycle_state,
-                        "management_agent_id": item.management_agent_id,
-                        "cloud_resource_id": item.cloud_resource_id,
-                        "time_created": str(item.time_created) if item.time_created else None,
-                    })
-
-                return {
-                    "success": True,
-                    "profile": profile_name,
-                    "count": len(entities),
-                    "entities": entities,
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "profile": profile_name,
-                }
+            entities = canonical.get("results", []) or []
+            if name:
+                entities = [
+                    item for item in entities
+                    if name.lower() in (item.get("name") or "").lower()
+                ]
+            return {
+                "success": True,
+                "profile": profile_name,
+                "count": len(entities),
+                "entities": entities[:limit],
+                "canonical_server": settings.logan_http_url,
+            }
 
         return await cached_call(
             "list_entities",
@@ -449,52 +362,34 @@ def register_tools(mcp: "FastMCP") -> None:
         """
 
         async def _fetch():
-            manager = get_oci_manager()
             profile_name = profile or "DEFAULT"
+            canonical = await _call_canonical(
+                "oci_logan_list_parsers",
+                {
+                    "limit": limit,
+                    "format": "json",
+                },
+            )
+            if canonical.get("error"):
+                return {"success": False, "error": canonical["error"], "profile": profile_name}
 
-            try:
-                client = await manager.get_logan_client(profile_name)
-                namespace = await _get_namespace(profile_name)
+            parsers = canonical.get("results", []) or []
+            if parser_name:
+                parsers = [
+                    item for item in parsers
+                    if parser_name.lower() in (item.get("name") or "").lower()
+                    or parser_name.lower() in (item.get("display_name") or "").lower()
+                ]
+            if is_system is not None:
+                parsers = [item for item in parsers if bool(item.get("is_system")) is is_system]
 
-                def _call_api():
-                    kwargs = {
-                        "namespace_name": namespace,
-                        "limit": limit,
-                    }
-
-                    if parser_name:
-                        kwargs["parser_name"] = parser_name
-                    if is_system is not None:
-                        kwargs["is_system"] = "SYSTEM" if is_system else "CUSTOM"
-
-                    response = client.list_parsers(**kwargs)
-                    return response.data.items
-
-                items = await asyncio.to_thread(_call_api)
-
-                parsers = []
-                for item in items:
-                    parsers.append({
-                        "name": item.name,
-                        "display_name": item.display_name,
-                        "type": item.type,
-                        "is_system": item.is_system,
-                        "description": item.description[:200] if item.description else None,
-                    })
-
-                return {
-                    "success": True,
-                    "profile": profile_name,
-                    "count": len(parsers),
-                    "parsers": parsers,
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "profile": profile_name,
-                }
+            return {
+                "success": True,
+                "profile": profile_name,
+                "count": len(parsers),
+                "parsers": parsers[:limit],
+                "canonical_server": settings.logan_http_url,
+            }
 
         return await cached_call(
             "list_parsers",
@@ -529,50 +424,32 @@ def register_tools(mcp: "FastMCP") -> None:
         """
 
         async def _fetch():
-            manager = get_oci_manager()
             profile_name = profile or "DEFAULT"
+            canonical = await _call_canonical(
+                "oci_logan_list_labels",
+                {
+                    "limit": limit,
+                    "format": "json",
+                },
+            )
+            if canonical.get("error"):
+                return {"success": False, "error": canonical["error"], "profile": profile_name}
 
-            try:
-                client = await manager.get_logan_client(profile_name)
-                namespace = await _get_namespace(profile_name)
+            labels = canonical.get("results", []) or []
+            if label_name:
+                labels = [
+                    item for item in labels
+                    if label_name.lower() in (item.get("name") or "").lower()
+                    or label_name.lower() in (item.get("display_name") or "").lower()
+                ]
 
-                def _call_api():
-                    kwargs = {
-                        "namespace_name": namespace,
-                        "limit": limit,
-                    }
-
-                    if label_name:
-                        kwargs["label_display_text"] = label_name
-
-                    response = client.list_labels(**kwargs)
-                    return response.data.items
-
-                items = await asyncio.to_thread(_call_api)
-
-                labels = []
-                for item in items:
-                    labels.append({
-                        "name": item.name,
-                        "display_name": item.display_name,
-                        "type": item.type,
-                        "is_system": item.is_system,
-                        "description": item.description[:200] if item.description else None,
-                    })
-
-                return {
-                    "success": True,
-                    "profile": profile_name,
-                    "count": len(labels),
-                    "labels": labels,
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "profile": profile_name,
-                }
+            return {
+                "success": True,
+                "profile": profile_name,
+                "count": len(labels),
+                "labels": labels[:limit],
+                "canonical_server": settings.logan_http_url,
+            }
 
         return await cached_call(
             "list_labels",
@@ -607,48 +484,26 @@ def register_tools(mcp: "FastMCP") -> None:
         """
 
         async def _fetch():
-            manager = get_oci_manager()
             profile_name = profile or "DEFAULT"
+            canonical = await _call_canonical(
+                "oci_logan_list_log_groups",
+                {
+                    "compartmentId": compartment_id or "",
+                    "limit": limit,
+                    "format": "json",
+                },
+            )
+            if canonical.get("error"):
+                return {"success": False, "error": canonical["error"], "profile": profile_name}
 
-            try:
-                config = await manager.get_config(profile_name)
-                client = await manager.get_logan_client(profile_name)
-                namespace = await _get_namespace(profile_name)
-
-                comp_id = compartment_id or config.compartment_id
-
-                def _call_api():
-                    response = client.list_log_analytics_log_groups(
-                        namespace_name=namespace,
-                        compartment_id=comp_id,
-                        limit=limit,
-                    )
-                    return response.data.items
-
-                items = await asyncio.to_thread(_call_api)
-
-                groups = []
-                for item in items:
-                    groups.append({
-                        "id": item.id,
-                        "display_name": item.display_name,
-                        "description": item.description[:200] if item.description else None,
-                        "time_created": str(item.time_created) if item.time_created else None,
-                    })
-
-                return {
-                    "success": True,
-                    "profile": profile_name,
-                    "count": len(groups),
-                    "log_groups": groups,
-                }
-
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "profile": profile_name,
-                }
+            groups = canonical.get("results", []) or []
+            return {
+                "success": True,
+                "profile": profile_name,
+                "count": len(groups),
+                "log_groups": groups[:limit],
+                "canonical_server": settings.logan_http_url,
+            }
 
         return await cached_call(
             "list_log_groups",
@@ -756,24 +611,23 @@ def register_tools(mcp: "FastMCP") -> None:
         """
         profile_name = profile or "DEFAULT"
 
-        # Get baseline data
         baseline_query = "* | stats count as baseline_count by 'Log Source'"
-        baseline_result = await execute_logan_query(
-            query=baseline_query,
-            time_range_minutes=baseline_hours * 60,
-            max_count=500,
-            compartment_id=compartment_id,
-            profile=profile_name,
-        )
-
-        # Get recent data
         recent_query = "* | stats count as recent_count by 'Log Source'"
-        recent_result = await execute_logan_query(
-            query=recent_query,
-            time_range_minutes=detection_hours * 60,
-            max_count=500,
-            compartment_id=compartment_id,
-            profile=profile_name,
+        baseline_result, recent_result = await asyncio.gather(
+            execute_logan_query(
+                query=baseline_query,
+                time_range_minutes=baseline_hours * 60,
+                max_count=500,
+                compartment_id=compartment_id,
+                profile=profile_name,
+            ),
+            execute_logan_query(
+                query=recent_query,
+                time_range_minutes=detection_hours * 60,
+                max_count=500,
+                compartment_id=compartment_id,
+                profile=profile_name,
+            ),
         )
 
         if not baseline_result.get("success") or not recent_result.get("success"):
@@ -865,66 +719,19 @@ def register_tools(mcp: "FastMCP") -> None:
             Comprehensive log summary
         """
         profile_name = profile or "DEFAULT"
-
-        # Run multiple queries in parallel
-        queries = {
-            "by_source": "* | stats count as logs by 'Log Source' | sort -logs | head 10",
-            "by_severity": "* | stats count as logs by Severity | sort -logs",
-            "by_entity": "* | stats count as logs by 'Entity Name' | sort -logs | head 10",
-            "errors": "Severity IN ('error', 'critical') | stats count as errors by 'Log Source' | sort -errors | head 10",
-        }
-
-        results = {}
-        for name, query in queries.items():
-            result = await execute_logan_query(
-                query=query,
-                time_range_minutes=time_range_minutes,
-                max_count=100,
-                compartment_id=compartment_id,
-                profile=profile_name,
-            )
-            results[name] = result
-
-        # Parse results
-        summary = {
-            "success": True,
-            "profile": profile_name,
-            "time_range_minutes": time_range_minutes,
-            "by_source": [],
-            "by_severity": {},
-            "by_entity": [],
-            "error_summary": [],
-            "total_logs": 0,
-            "total_errors": 0,
-        }
-
-        # Process by_source
-        if results["by_source"].get("success"):
-            for row in results["by_source"].get("rows", []):
-                if len(row) >= 2:
-                    summary["by_source"].append({"source": row[0], "count": int(row[1])})
-                    summary["total_logs"] += int(row[1])
-
-        # Process by_severity
-        if results["by_severity"].get("success"):
-            for row in results["by_severity"].get("rows", []):
-                if len(row) >= 2:
-                    summary["by_severity"][row[0]] = int(row[1])
-
-        # Process by_entity
-        if results["by_entity"].get("success"):
-            for row in results["by_entity"].get("rows", []):
-                if len(row) >= 2:
-                    summary["by_entity"].append({"entity": row[0], "count": int(row[1])})
-
-        # Process errors
-        if results["errors"].get("success"):
-            for row in results["errors"].get("rows", []):
-                if len(row) >= 2:
-                    summary["error_summary"].append({"source": row[0], "errors": int(row[1])})
-                    summary["total_errors"] += int(row[1])
-
-        return summary
+        canonical = await _call_canonical(
+            "oci_logan_get_summary",
+            {
+                "timeRange": _minutes_to_time_range(time_range_minutes),
+                "format": "json",
+            },
+        )
+        if canonical.get("error"):
+            return {"success": False, "error": canonical["error"], "profile": profile_name}
+        canonical["success"] = True
+        canonical["profile"] = profile_name
+        canonical["time_range_minutes"] = time_range_minutes
+        return canonical
 
     @mcp.tool(
         name="oci_logan_suggest_query",
@@ -1032,31 +839,35 @@ def register_tools(mcp: "FastMCP") -> None:
             List of active log sources with counts
         """
         profile_name = profile or "DEFAULT"
-
-        query = f"* | stats count as logs by 'Log Source' | where logs >= {min_count} | sort -logs"
-
-        result = await execute_logan_query(
-            query=query,
-            time_range_minutes=time_range_minutes,
-            max_count=200,
-            compartment_id=compartment_id,
-            profile=profile_name,
+        canonical = await _call_canonical(
+            "oci_logan_list_active_log_sources",
+            {
+                "timeRange": _minutes_to_time_range(time_range_minutes),
+                "compartmentId": compartment_id or "",
+                "limit": 200,
+                "format": "json",
+            },
         )
+        if canonical.get("error"):
+            return {
+                "success": False,
+                "error": canonical["error"],
+                "profile": profile_name,
+            }
 
-        if not result.get("success"):
-            return result
-
+        raw_sources = canonical.get("results", []) or []
         active_sources = []
         total_logs = 0
-
-        for row in result.get("rows", []):
-            if len(row) >= 2:
-                count = int(row[1])
-                active_sources.append({
-                    "source": row[0],
-                    "count": count,
-                })
-                total_logs += count
+        for item in raw_sources:
+            count = int(item.get("log_count", 0) or 0)
+            if count < min_count:
+                continue
+            active_sources.append({
+                "source": item.get("display_name") or item.get("name"),
+                "count": count,
+                "has_data": item.get("has_data", count > 0),
+            })
+            total_logs += count
 
         return {
             "success": True,
@@ -1065,6 +876,7 @@ def register_tools(mcp: "FastMCP") -> None:
             "active_source_count": len(active_sources),
             "total_logs": total_logs,
             "sources": active_sources,
+            "canonical_server": settings.logan_http_url,
         }
 
     @mcp.tool(
@@ -1097,24 +909,22 @@ def register_tools(mcp: "FastMCP") -> None:
             Logs for the specified entity
         """
         profile_name = profile or "DEFAULT"
-
-        # Build query
-        query = f"'Entity Name' = '{entity_name}'"
-        if severity:
-            query += f" AND Severity = '{severity}'"
-        query += " | head " + str(max_count)
-
-        result = await execute_logan_query(
-            query=query,
-            time_range_minutes=time_range_minutes,
-            max_count=max_count,
-            profile=profile_name,
+        canonical = await _call_canonical(
+            "oci_logan_get_entity_logs",
+            {
+                "entityName": entity_name,
+                "timeRange": _minutes_to_time_range(time_range_minutes),
+                "severity": severity or "",
+                "limit": max_count,
+                "format": "json",
+            },
         )
-
-        if result.get("success"):
-            result["entity_name"] = entity_name
-
-        return result
+        if canonical.get("error"):
+            return {"success": False, "error": canonical["error"], "profile": profile_name}
+        canonical["success"] = True
+        canonical["profile"] = profile_name
+        canonical["entity_name"] = entity_name
+        return canonical
 
     @mcp.tool(
         name="oci_logan_list_skills",

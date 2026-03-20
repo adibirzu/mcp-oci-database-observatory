@@ -4,6 +4,7 @@ Supports multiple OCI profiles/tenancies with automatic discovery
 from ~/.oci/config file.
 """
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -89,7 +90,7 @@ class TenancyManager:
 
             self._loaded = True
         except Exception as e:
-            print(f"Error reading OCI config: {e}")
+            logging.error(f"Error reading OCI config: {e}")
 
         return profiles
 

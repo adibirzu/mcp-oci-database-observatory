@@ -274,7 +274,7 @@ class DatabaseCatalog:
     async def _discover_dbmgmt(
         self,
         compartment_id: str | None = None,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
     ) -> list[DatabaseEntry]:
         """Discover databases from OCI Database Management API."""
         if not self._executor:
@@ -333,7 +333,7 @@ class DatabaseCatalog:
     async def _discover_opsi(
         self,
         compartment_id: str | None = None,
-        profile: str = "PRODUCTION",
+        profile: str = "DEFAULT",
     ) -> list[DatabaseEntry]:
         """Discover databases from OCI Operations Insights."""
         if not self._executor:

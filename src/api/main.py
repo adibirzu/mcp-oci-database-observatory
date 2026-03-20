@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.dependencies import get_server_registry, get_tool_catalog
-from src.api.routes import agents_router, health_router, llm_router, mcp_router
+from src.api.routes import agents_router, compliance_router, health_router, llm_router, mcp_router
 from src.core import get_logger, settings
 from src.logging import LogManager, OCILoggingHandler
 from src.observability import init_tracing
@@ -100,15 +100,24 @@ def create_app() -> FastAPI:
     app.include_router(agents_router)
     app.include_router(mcp_router)
     app.include_router(llm_router)
+    app.include_router(compliance_router)
 
     @app.get("/")
     async def root() -> dict[str, Any]:
         """Root endpoint."""
         return {
             "service": "OCI Database Observatory",
-            "version": "0.1.0",
+            "version": "0.2.0",
             "docs": "/docs",
             "health": "/health",
+            "endpoints": {
+                "agents": "/agents/query",
+                "mcp_tools": "/mcp/tools",
+                "llm_providers": "/llm/providers",
+                "compliance": "/compliance",
+                "compliance_scan": "/compliance/scan",
+                "compliance_report": "/compliance/report",
+            },
         }
 
     return app
