@@ -197,13 +197,13 @@ AI agents can call `get_skill_recommendations(query)` to get optimal tool sugges
 ### Development (stdio)
 
 ```bash
-python -m src.mcp_server
+python -m src.oci_database_observatory
 ```
 
 ### Production (HTTP)
 
 ```bash
-MCP_TRANSPORT=http MCP_HTTP_PORT=8000 python -m src.mcp_server
+MCP_TRANSPORT=http MCP_HTTP_PORT=8000 python -m src.oci_database_observatory
 ```
 
 ### Docker
@@ -214,7 +214,7 @@ COPY . /app
 WORKDIR /app
 RUN pip install -e .
 EXPOSE 8000
-CMD ["python", "-m", "src.mcp_server"]
+CMD ["python", "-m", "src.oci_database_observatory"]
 ```
 
 ## Extension Points

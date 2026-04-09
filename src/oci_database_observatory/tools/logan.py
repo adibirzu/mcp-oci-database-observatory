@@ -12,7 +12,7 @@ Multi-tenancy: All tools accept optional 'profile' parameter.
 import asyncio
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -34,6 +34,13 @@ def _minutes_to_time_range(minutes: int) -> str:
     if total_minutes % 60 == 0:
         return f"{total_minutes // 60}h"
     return f"{total_minutes}m"
+
+
+def _canonical_args(profile: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
+    """Build canonical Logan RPC arguments with explicit tenancy scoping."""
+    arguments = dict(kwargs)
+    arguments["profile"] = profile or "DEFAULT"
+    return arguments
 
 
 async def _call_canonical(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -81,7 +88,9 @@ async def _call_canonical(tool_name: str, arguments: Dict[str, Any]) -> Dict[str
     return {"success": True, "result": parsed}
 
 
-def _rows_from_results(results: List[Dict[str, Any]], max_count: int) -> tuple[List[str], List[List[Any]]]:
+def _rows_from_results(
+    results: List[Dict[str, Any]], max_count: int
+) -> tuple[List[str], List[List[Any]]]:
     columns: List[str] = []
     for item in results:
         for key in item:
@@ -90,6 +99,7 @@ def _rows_from_results(results: List[Dict[str, Any]], max_count: int) -> tuple[L
     rows = [[item.get(column) for column in columns] for item in results[:max_count]]
     return columns, rows
 
+
 # Security query templates for common use cases
 SECURITY_QUERIES = {
     "failed_logins": "Severity = 'error' AND Message =~ 'login|authentication|auth' AND Message =~ 'fail|denied|invalid' | stats count as failures by 'Entity Name', 'Log Source' | sort -failures",
@@ -97,6 +107,129 @@ SECURITY_QUERIES = {
     "network_anomalies": "'Log Source' =~ 'Network|Firewall|VCN' AND (Severity = 'warning' OR Severity = 'error') | stats count by 'Entity Name', 'Log Source' | sort -count",
     "database_errors": "'Log Source' =~ 'Oracle|Database|DB' AND Severity IN ('error', 'critical') | stats count by 'Entity Name', Message | top 20 count",
     "audit_trail": "'Log Source' = 'OCI Audit Logs' | stats count by 'User Name', 'Request Action' | sort -count",
+}
+
+# SKP APM security presets — auto-generated from Seven Kingdoms Portal detection rules
+# 44 rules covering 12 MITRE tactics, 28 techniques (OWASP Top 10 + AD attacks)
+# Source: scripts/generate_mcp_observatory_presets.py in OCI-DEMO
+_SKP_SECURITY_QUERIES = {
+    # --- OWASP: Injection (A03) ---
+    "skp_sqli": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'sqli' | where security_attack_payload like '%OR%1%=%1%' or security_attack_payload like '%UNION%SELECT%' | stats count as sqli_count by security_source_ip",
+    "skp_nosql_injection": "'Log Source' = 'OCI APM Trace' | where nosql_injection_detected = 'true' | stats count by security_source_ip, nosql_filter",
+    "skp_ldap_injection": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'ldap_injection' | stats count by security_source_ip, security_username",
+    "skp_ssti": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'ssti' | stats count by security_source_ip",
+    "skp_rce": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'rce' | stats count as rce_count by security_attack_payload, security_source_ip",
+    "skp_xss": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'xss' | where security_attack_payload like '%<script%' or security_attack_payload like '%onerror%' | stats count by security_source_ip",
+    "skp_xxe": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'xxe' | stats count by security_source_ip",
+    "skp_log_injection": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'log_injection' | stats count by security_source_ip",
+    "skp_header_injection": "'Log Source' = 'OCI APM Trace' | where header_injection_crlf_detected = 'true' | stats count by security_source_ip",
+    # --- OWASP: Broken Access Control (A01) ---
+    "skp_idor": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'idor' | stats count as attack_count by security_source_ip, security_username | where attack_count > 3",
+    "skp_path_traversal": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'path_traversal' | stats count as traversal_count by security_source_ip",
+    "skp_privilege_escalation": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'privilege_escalation' | stats count by security_source_ip, security_escalation_role",
+    "skp_mass_assignment": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'mass_assignment' | stats count by security_username",
+    "skp_csrf": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'csrf' | stats count by security_source_ip, security_csrf_referer",
+    "skp_forged_identity": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'forged_identity' | stats count by security_actual_user, security_claimed_user",
+    # --- OWASP: Auth Failures (A07) ---
+    "skp_auth_bypass": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'auth_bypass' | stats count by security_username, security_source_ip",
+    "skp_brute_force": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'brute_force' | stats count as attempts by security_source_ip | where attempts >= 5",
+    "skp_jwt_manipulation": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'jwt_manipulation' | stats count by security_source_ip",
+    "skp_credential_leak": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'credential_leak' | stats earliest(security_attack_timestamp) as first_seen, count as leak_count by security_source_ip",
+    "skp_credential_config_leak": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'credential_leak' | stats count as access_count by security_source_ip | where access_count > 1",
+    "skp_credential_api_key_leak": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'credential_leak' | where credential_type = 'api_key' | stats count as access_count by security_source_ip | where access_count >= 1",
+    "skp_security_question_bypass": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'security_question_bypass' or security_attack_type = 'password_reset_osint' | stats count by security_source_ip, security_username",
+    "skp_captcha_bypass": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'captcha_bypass' | stats count by security_source_ip",
+    # --- OWASP: Insecure Design (A04) / Deserialization (A08) ---
+    "skp_deserialization": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'deserialization' | stats count by security_source_ip",
+    "skp_prototype_pollution": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'prototype_pollution' | stats count by security_source_ip",
+    "skp_open_redirect": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'open_redirect' | stats count by security_attack_payload",
+    "skp_webshell_upload": "'Log Source' = 'OCI APM Trace' | where upload_is_webshell = 'true' or upload_has_script_content = 'true' | stats count by security_source_ip, upload_filename",
+    # --- OWASP: SSRF (A10) ---
+    "skp_ssrf": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'ssrf' | where security_attack_payload like '%169.254%' or security_attack_payload like '%127.0.0%' or security_attack_payload like '%10.0.%' | stats count by security_attack_payload, security_source_ip",
+    "skp_internal_recon": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'internal_recon' | stats count as probe_count by security_source_ip, recon_target_url | where probe_count >= 3",
+    # --- Business Logic Abuse ---
+    "skp_coupon_forge": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'coupon_forge' | stats count as forge_count by security_source_ip",
+    "skp_negative_quantity": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'negative_quantity' or security_attack_type = 'negative_transfer' | stats count by security_source_ip",
+    "skp_price_tampering": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'price_tampering' | stats count by security_source_ip, shop_original_price, shop_tampered_price",
+    # --- Active Directory Attacks ---
+    "skp_kerberoasting": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | where security_attack_mitre_id = 'T1558.003' | stats count as kerberoast_count, distinctcount(security_kerberos_spn) as unique_spns, earliest(TimeGenerated) as first_seen, latest(TimeGenerated) as last_seen by security_source_ip | where kerberoast_count >= 1 | sort -kerberoast_count",
+    "skp_dcsync": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | where security_attack_mitre_id = 'T1003.006' | stats count as dcsync_count, distinctcount(security_dcsync_target_user) as unique_targets, values(security_dcsync_target_user) as targeted_users, earliest(TimeGenerated) as first_seen, latest(TimeGenerated) as last_seen by security_source_ip, security_dcsync_domain | where dcsync_count >= 1 | sort -dcsync_count",
+    "skp_adcs_enumerate": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | where security_attack_type = 'adcs_enumerate' | eval vuln_count = tonumber(security_adcs_vulnerable_templates) | stats count as enum_attempts, max(vuln_count) as max_vuln_templates, values(security_adcs_ca_name) as target_cas, earliest(TimeGenerated) as first_seen, latest(TimeGenerated) as last_seen by security_source_ip | where enum_attempts >= 1 | sort -enum_attempts",
+    "skp_adcs_esc1": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | where security_attack_type = 'adcs_esc1' | stats count as esc1_requests, distinctcount(security_adcs_requested_san) as unique_impersonations, values(security_adcs_requested_san) as impersonated_users, values(security_adcs_template) as templates_used, earliest(TimeGenerated) as first_seen, latest(TimeGenerated) as last_seen by security_source_ip | where esc1_requests >= 1 | sort -esc1_requests",
+    "skp_adcs_esc4": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | where security_attack_type = 'adcs_esc4' | stats count as template_mods, values(security_adcs_template_modified) as modified_templates, values(security_adcs_acl_change) as acl_changes, earliest(TimeGenerated) as first_seen, latest(TimeGenerated) as last_seen by security_source_ip | where template_mods >= 1 | sort -template_mods",
+    "skp_adcs_esc8": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | where security_attack_type = 'adcs_esc8' | stats count as relay_attempts, distinctcount(security_adcs_relay_source) as unique_sources, values(security_adcs_relay_source) as relayed_hosts, values(security_adcs_relay_target) as target_cas, earliest(TimeGenerated) as first_seen, latest(TimeGenerated) as last_seen by security_source_ip | where relay_attempts >= 1 | sort -relay_attempts",
+    "skp_adcs_ca_exploit": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | where security_attack_type = 'adcs_ca_exploit' | stats count as ca_exploit_attempts, values(security_adcs_ca_flags) as exposed_flags, earliest(TimeGenerated) as first_seen, latest(TimeGenerated) as last_seen by security_source_ip | where ca_exploit_attempts >= 1 | sort -ca_exploit_attempts",
+    "skp_adcs_chain": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | where security_attack_type like 'adcs_%' | stats distinctcount(security_attack_type) as adcs_attack_stages, values(security_attack_type) as attack_types_seen, values(security_adcs_requested_san) as impersonated_users, values(security_adcs_relay_target) as relay_targets, values(security_adcs_template_modified) as modified_templates, count as total_adcs_events, earliest(TimeGenerated) as chain_start, latest(TimeGenerated) as chain_end by security_source_ip | where adcs_attack_stages >= 2 | sort -adcs_attack_stages",
+    # --- Multi-Stage / Kill Chain ---
+    "skp_multi_stage": "'Log Source' = 'OCI APM Trace' | where security_attack_detected = 'true' | stats distinctcount(security_attack_type) as attack_types, count as total_attacks by security_source_ip | where attack_types >= 3",
+    "skp_c2_exfiltration": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'c2_exfiltration' | stats sum(exfiltration_bytes) as total_bytes, count as upload_count by security_source_ip | where upload_count >= 2",
+    "skp_data_collection": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'data_collection' | stats count as collection_count by security_source_ip | where collection_count >= 1",
+    "skp_service_persistence": "'Log Source' = 'OCI APM Trace' | where security_attack_type = 'service_persistence' | where persistence_exec_path like '%/tmp/%' or persistence_exec_path like '%/dev/shm/%' | stats count by security_source_ip, persistence_service_name",
+}
+
+# Merge SKP presets into main SECURITY_QUERIES
+SECURITY_QUERIES.update(_SKP_SECURITY_QUERIES)
+
+# Human-readable descriptions for security query types
+_SECURITY_QUERY_DESCRIPTIONS = {
+    # Infrastructure queries
+    "failed_logins": "Failed authentication attempts detected",
+    "privileged_operations": "Privileged operation activity",
+    "network_anomalies": "Network-related warnings and errors",
+    "database_errors": "Database error events",
+    "audit_trail": "OCI audit log activity summary",
+    # SKP APM queries — Injection
+    "skp_sqli": "SQL injection attempts via APM traces",
+    "skp_nosql_injection": "NoSQL operator injection via JSON filters",
+    "skp_ldap_injection": "LDAP directory query manipulation",
+    "skp_ssti": "Server-side template injection",
+    "skp_rce": "OS command injection / remote code execution",
+    "skp_xss": "Cross-site scripting payload injection",
+    "skp_xxe": "XML external entity injection",
+    "skp_log_injection": "Log forging / injection attacks",
+    "skp_header_injection": "HTTP header CRLF response splitting",
+    # SKP APM queries — Access Control
+    "skp_idor": "Insecure direct object reference (IDOR)",
+    "skp_path_traversal": "Directory traversal / path escape",
+    "skp_privilege_escalation": "Hidden role privilege escalation",
+    "skp_mass_assignment": "Mass assignment via registration",
+    "skp_csrf": "Cross-site request forgery",
+    "skp_forged_identity": "Review submitted as another user",
+    # SKP APM queries — Authentication
+    "skp_auth_bypass": "Default/well-known credential login",
+    "skp_brute_force": "Multiple failed login attempts",
+    "skp_jwt_manipulation": "JWT none-algorithm signature bypass",
+    "skp_credential_leak": "Debug endpoint credential exposure",
+    "skp_credential_config_leak": "Crypto config disclosure",
+    "skp_credential_api_key_leak": "Unsecured API key endpoint",
+    "skp_security_question_bypass": "OSINT-based password reset bypass",
+    "skp_captcha_bypass": "Anti-automation CAPTCHA defeated",
+    # SKP APM queries — Design / Deserialization
+    "skp_deserialization": "Insecure deserialization (pickle/JSON)",
+    "skp_prototype_pollution": "Config deep merge prototype pollution",
+    "skp_open_redirect": "URL manipulation open redirect",
+    "skp_webshell_upload": "Web shell / script content upload",
+    # SKP APM queries — SSRF
+    "skp_ssrf": "Server-side request forgery to internal IPs",
+    "skp_internal_recon": "Internal network reconnaissance via SSRF",
+    # SKP APM queries — Business Logic
+    "skp_coupon_forge": "Weak-encoding coupon forgery",
+    "skp_negative_quantity": "Reverse purchase fraud via negative qty",
+    "skp_price_tampering": "Client-side price override",
+    # SKP APM queries — Active Directory
+    "skp_kerberoasting": "SPN ticket extraction (Kerberoasting)",
+    "skp_dcsync": "Domain controller replication attack (DCSync)",
+    "skp_adcs_enumerate": "ADCS vulnerable template discovery",
+    "skp_adcs_esc1": "ADCS ESC1 certificate SAN impersonation",
+    "skp_adcs_esc4": "ADCS ESC4 template ACL modification",
+    "skp_adcs_esc8": "ADCS ESC8 NTLM relay to cert enrollment",
+    "skp_adcs_ca_exploit": "ADCS ESC6/7 CA configuration exploit",
+    "skp_adcs_chain": "ADCS multi-stage attack chain",
+    # SKP APM queries — Kill Chain
+    "skp_multi_stage": "Multi-stage attack chain (3+ attack types)",
+    "skp_c2_exfiltration": "Data exfiltration over C2 channel",
+    "skp_data_collection": "Sensitive file aggregation/collection",
+    "skp_service_persistence": "Malicious system service persistence",
 }
 
 # Common query patterns for suggestions
@@ -149,18 +282,20 @@ def register_tools(mcp: "FastMCP") -> None:
         """
         profile_name = profile or "DEFAULT"
         from .logan_ai import fix_query_fields
+
         query = fix_query_fields(query)
 
         try:
             canonical = await _call_canonical(
                 "oci_logan_execute_query",
-                {
-                    "query": query,
-                    "timeRange": _minutes_to_time_range(time_range_minutes),
-                    "limit": max_count,
-                    "compartmentId": compartment_id or "",
-                    "format": "json",
-                },
+                _canonical_args(
+                    profile,
+                    query=query,
+                    timeRange=_minutes_to_time_range(time_range_minutes),
+                    limit=max_count,
+                    compartmentId=compartment_id or "",
+                    format="json",
+                ),
             )
             if canonical.get("error"):
                 return {
@@ -232,19 +367,21 @@ def register_tools(mcp: "FastMCP") -> None:
         Returns:
             List of log sources
         """
+
         async def _fetch():
             profile_name = profile or "DEFAULT"
             canonical = await _call_canonical(
                 "oci_logan_list_log_sources",
-                {
-                    "compartmentId": compartment_id or "",
-                    "displayName": display_name or "",
-                    "isSystem": (
+                _canonical_args(
+                    profile,
+                    compartmentId=compartment_id or "",
+                    displayName=display_name or "",
+                    isSystem=(
                         "true" if is_system is True else "false" if is_system is False else ""
                     ),
-                    "limit": limit,
-                    "format": "json",
-                },
+                    limit=limit,
+                    format="json",
+                ),
             )
             if canonical.get("error"):
                 return {"success": False, "error": canonical["error"], "profile": profile_name}
@@ -252,7 +389,8 @@ def register_tools(mcp: "FastMCP") -> None:
             sources = canonical.get("results", []) or []
             if source_type:
                 sources = [
-                    item for item in sources
+                    item
+                    for item in sources
                     if (item.get("source_type") or "").lower() == source_type.lower()
                 ]
             return {
@@ -265,7 +403,14 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return await cached_call(
             "list_log_sources",
-            {"display_name": display_name, "source_type": source_type, "is_system": is_system, "limit": limit, "profile": profile},
+            {
+                "display_name": display_name,
+                "source_type": source_type,
+                "is_system": is_system,
+                "limit": limit,
+                "compartment_id": compartment_id,
+                "profile": profile,
+            },
             _fetch,
         )
 
@@ -303,12 +448,13 @@ def register_tools(mcp: "FastMCP") -> None:
             profile_name = profile or "DEFAULT"
             canonical = await _call_canonical(
                 "oci_logan_list_entities",
-                {
-                    "entityType": entity_type or "all",
-                    "compartmentId": compartment_id or "",
-                    "limit": limit,
-                    "format": "json",
-                },
+                _canonical_args(
+                    profile,
+                    entityType=entity_type or "all",
+                    compartmentId=compartment_id or "",
+                    limit=limit,
+                    format="json",
+                ),
             )
             if canonical.get("error"):
                 return {"success": False, "error": canonical["error"], "profile": profile_name}
@@ -316,8 +462,7 @@ def register_tools(mcp: "FastMCP") -> None:
             entities = canonical.get("results", []) or []
             if name:
                 entities = [
-                    item for item in entities
-                    if name.lower() in (item.get("name") or "").lower()
+                    item for item in entities if name.lower() in (item.get("name") or "").lower()
                 ]
             return {
                 "success": True,
@@ -329,7 +474,13 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return await cached_call(
             "list_entities",
-            {"entity_type": entity_type, "name": name, "limit": limit, "profile": profile},
+            {
+                "entity_type": entity_type,
+                "name": name,
+                "limit": limit,
+                "compartment_id": compartment_id,
+                "profile": profile,
+            },
             _fetch,
         )
 
@@ -365,10 +516,11 @@ def register_tools(mcp: "FastMCP") -> None:
             profile_name = profile or "DEFAULT"
             canonical = await _call_canonical(
                 "oci_logan_list_parsers",
-                {
-                    "limit": limit,
-                    "format": "json",
-                },
+                _canonical_args(
+                    profile,
+                    limit=limit,
+                    format="json",
+                ),
             )
             if canonical.get("error"):
                 return {"success": False, "error": canonical["error"], "profile": profile_name}
@@ -376,7 +528,8 @@ def register_tools(mcp: "FastMCP") -> None:
             parsers = canonical.get("results", []) or []
             if parser_name:
                 parsers = [
-                    item for item in parsers
+                    item
+                    for item in parsers
                     if parser_name.lower() in (item.get("name") or "").lower()
                     or parser_name.lower() in (item.get("display_name") or "").lower()
                 ]
@@ -393,7 +546,12 @@ def register_tools(mcp: "FastMCP") -> None:
 
         return await cached_call(
             "list_parsers",
-            {"parser_name": parser_name, "is_system": is_system, "limit": limit, "profile": profile},
+            {
+                "parser_name": parser_name,
+                "is_system": is_system,
+                "limit": limit,
+                "profile": profile,
+            },
             _fetch,
         )
 
@@ -427,10 +585,11 @@ def register_tools(mcp: "FastMCP") -> None:
             profile_name = profile or "DEFAULT"
             canonical = await _call_canonical(
                 "oci_logan_list_labels",
-                {
-                    "limit": limit,
-                    "format": "json",
-                },
+                _canonical_args(
+                    profile,
+                    limit=limit,
+                    format="json",
+                ),
             )
             if canonical.get("error"):
                 return {"success": False, "error": canonical["error"], "profile": profile_name}
@@ -438,7 +597,8 @@ def register_tools(mcp: "FastMCP") -> None:
             labels = canonical.get("results", []) or []
             if label_name:
                 labels = [
-                    item for item in labels
+                    item
+                    for item in labels
                     if label_name.lower() in (item.get("name") or "").lower()
                     or label_name.lower() in (item.get("display_name") or "").lower()
                 ]
@@ -487,11 +647,12 @@ def register_tools(mcp: "FastMCP") -> None:
             profile_name = profile or "DEFAULT"
             canonical = await _call_canonical(
                 "oci_logan_list_log_groups",
-                {
-                    "compartmentId": compartment_id or "",
-                    "limit": limit,
-                    "format": "json",
-                },
+                _canonical_args(
+                    profile,
+                    compartmentId=compartment_id or "",
+                    limit=limit,
+                    format="json",
+                ),
             )
             if canonical.get("error"):
                 return {"success": False, "error": canonical["error"], "profile": profile_name}
@@ -533,12 +694,21 @@ def register_tools(mcp: "FastMCP") -> None:
     ) -> Dict[str, Any]:
         """Run a predefined security analysis query.
 
-        Available query types:
+        Available query types (infrastructure):
         - failed_logins: Detect failed authentication attempts
         - privileged_operations: Track sudo/root/admin actions
         - network_anomalies: Find network/firewall warnings/errors
         - database_errors: Database-related errors
         - audit_trail: OCI audit log summary
+
+        SKP APM queries (prefix 'skp_') — 44 APM-based detection rules:
+        - skp_sqli, skp_nosql_injection, skp_xss, skp_xxe, skp_ssti, skp_rce: Injection attacks
+        - skp_idor, skp_path_traversal, skp_privilege_escalation, skp_csrf: Access control
+        - skp_auth_bypass, skp_brute_force, skp_jwt_manipulation, skp_credential_leak: Auth failures
+        - skp_ssrf, skp_internal_recon: SSRF / network probing
+        - skp_kerberoasting, skp_dcsync, skp_adcs_*: Active Directory attacks
+        - skp_multi_stage, skp_c2_exfiltration, skp_service_persistence: Kill chain
+        - skp_coupon_forge, skp_negative_quantity, skp_price_tampering: Business logic abuse
 
         Args:
             query_type: One of the predefined security query types
@@ -567,13 +737,9 @@ def register_tools(mcp: "FastMCP") -> None:
 
         if result.get("success"):
             result["query_type"] = query_type
-            result["description"] = {
-                "failed_logins": "Failed authentication attempts detected",
-                "privileged_operations": "Privileged operation activity",
-                "network_anomalies": "Network-related warnings and errors",
-                "database_errors": "Database error events",
-                "audit_trail": "OCI audit log activity summary",
-            }.get(query_type, "Security analysis")
+            result["description"] = _SECURITY_QUERY_DESCRIPTIONS.get(
+                query_type, "SKP APM security analysis" if query_type.startswith("skp_") else "Security analysis"
+            )
 
         return result
 
@@ -640,8 +806,12 @@ def register_tools(mcp: "FastMCP") -> None:
 
         # Calculate anomalies
         anomalies = []
-        baseline_data = {row[0]: int(row[1]) for row in baseline_result.get("rows", []) if len(row) >= 2}
-        recent_data = {row[0]: int(row[1]) for row in recent_result.get("rows", []) if len(row) >= 2}
+        baseline_data = {
+            row[0]: int(row[1]) for row in baseline_result.get("rows", []) if len(row) >= 2
+        }
+        recent_data = {
+            row[0]: int(row[1]) for row in recent_result.get("rows", []) if len(row) >= 2
+        }
 
         # Normalize baseline to hourly rate
         baseline_rate = {k: v / baseline_hours for k, v in baseline_data.items()}
@@ -653,27 +823,33 @@ def register_tools(mcp: "FastMCP") -> None:
             if expected_rate > 0:
                 deviation = (recent_rate - expected_rate) / expected_rate
                 if abs(deviation) >= (threshold_multiplier - 1):
-                    anomalies.append({
-                        "log_source": source,
-                        "recent_count": recent_count,
-                        "expected_count": int(expected_rate * detection_hours),
-                        "deviation_percent": round(deviation * 100, 1),
-                        "anomaly_type": "spike" if deviation > 0 else "drop",
-                        "severity": "high" if abs(deviation) > 5 else "medium",
-                    })
+                    anomalies.append(
+                        {
+                            "log_source": source,
+                            "recent_count": recent_count,
+                            "expected_count": int(expected_rate * detection_hours),
+                            "deviation_percent": round(deviation * 100, 1),
+                            "anomaly_type": "spike" if deviation > 0 else "drop",
+                            "severity": "high" if abs(deviation) > 5 else "medium",
+                        }
+                    )
             elif recent_count > 100:
                 # New high-volume source
-                anomalies.append({
-                    "log_source": source,
-                    "recent_count": recent_count,
-                    "expected_count": 0,
-                    "deviation_percent": None,
-                    "anomaly_type": "new_source",
-                    "severity": "medium",
-                })
+                anomalies.append(
+                    {
+                        "log_source": source,
+                        "recent_count": recent_count,
+                        "expected_count": 0,
+                        "deviation_percent": None,
+                        "anomaly_type": "new_source",
+                        "severity": "medium",
+                    }
+                )
 
         # Sort by severity and count
-        anomalies.sort(key=lambda x: (-{"high": 2, "medium": 1}.get(x["severity"], 0), -x["recent_count"]))
+        anomalies.sort(
+            key=lambda x: (-{"high": 2, "medium": 1}.get(x["severity"], 0), -x["recent_count"])
+        )
 
         return {
             "success": True,
@@ -721,10 +897,12 @@ def register_tools(mcp: "FastMCP") -> None:
         profile_name = profile or "DEFAULT"
         canonical = await _call_canonical(
             "oci_logan_get_summary",
-            {
-                "timeRange": _minutes_to_time_range(time_range_minutes),
-                "format": "json",
-            },
+            _canonical_args(
+                profile,
+                timeRange=_minutes_to_time_range(time_range_minutes),
+                compartmentId=compartment_id or "",
+                format="json",
+            ),
         )
         if canonical.get("error"):
             return {"success": False, "error": canonical["error"], "profile": profile_name}
@@ -756,7 +934,7 @@ def register_tools(mcp: "FastMCP") -> None:
         Returns:
             Suggested query with explanation
         """
-        from .logan_ai import match_nl_question, NL_TEMPLATES
+        from .logan_ai import NL_TEMPLATES, match_nl_question
 
         intent_lower = intent.lower()
         suggestions = []
@@ -764,12 +942,14 @@ def register_tools(mcp: "FastMCP") -> None:
         # Use LoganAI templates (verified against live API)
         match = match_nl_question(intent)
         if match:
-            suggestions.append({
-                "query": match["query"],
-                "matched_keywords": [kw for kw in match["keywords"] if kw in intent_lower],
-                "description": match["description"],
-                "time_range": match.get("time_range", "24h"),
-            })
+            suggestions.append(
+                {
+                    "query": match["query"],
+                    "matched_keywords": [kw for kw in match["keywords"] if kw in intent_lower],
+                    "description": match["description"],
+                    "time_range": match.get("time_range", "24h"),
+                }
+            )
 
         # Also check other templates for related suggestions
         for template in NL_TEMPLATES:
@@ -777,12 +957,16 @@ def register_tools(mcp: "FastMCP") -> None:
                 continue
             score = sum(1 for kw in template["keywords"] if kw in intent_lower)
             if score > 0:
-                suggestions.append({
-                    "query": template["query"],
-                    "matched_keywords": [kw for kw in template["keywords"] if kw in intent_lower],
-                    "description": template["description"],
-                    "time_range": template.get("time_range", "24h"),
-                })
+                suggestions.append(
+                    {
+                        "query": template["query"],
+                        "matched_keywords": [
+                            kw for kw in template["keywords"] if kw in intent_lower
+                        ],
+                        "description": template["description"],
+                        "time_range": template.get("time_range", "24h"),
+                    }
+                )
 
         # Fallback suggestions
         if not suggestions:
@@ -841,12 +1025,13 @@ def register_tools(mcp: "FastMCP") -> None:
         profile_name = profile or "DEFAULT"
         canonical = await _call_canonical(
             "oci_logan_list_active_log_sources",
-            {
-                "timeRange": _minutes_to_time_range(time_range_minutes),
-                "compartmentId": compartment_id or "",
-                "limit": 200,
-                "format": "json",
-            },
+            _canonical_args(
+                profile,
+                timeRange=_minutes_to_time_range(time_range_minutes),
+                compartmentId=compartment_id or "",
+                limit=200,
+                format="json",
+            ),
         )
         if canonical.get("error"):
             return {
@@ -862,11 +1047,13 @@ def register_tools(mcp: "FastMCP") -> None:
             count = int(item.get("log_count", 0) or 0)
             if count < min_count:
                 continue
-            active_sources.append({
-                "source": item.get("display_name") or item.get("name"),
-                "count": count,
-                "has_data": item.get("has_data", count > 0),
-            })
+            active_sources.append(
+                {
+                    "source": item.get("display_name") or item.get("name"),
+                    "count": count,
+                    "has_data": item.get("has_data", count > 0),
+                }
+            )
             total_logs += count
 
         return {
@@ -911,13 +1098,14 @@ def register_tools(mcp: "FastMCP") -> None:
         profile_name = profile or "DEFAULT"
         canonical = await _call_canonical(
             "oci_logan_get_entity_logs",
-            {
-                "entityName": entity_name,
-                "timeRange": _minutes_to_time_range(time_range_minutes),
-                "severity": severity or "",
-                "limit": max_count,
-                "format": "json",
-            },
+            _canonical_args(
+                profile,
+                entityName=entity_name,
+                timeRange=_minutes_to_time_range(time_range_minutes),
+                severity=severity or "",
+                limit=max_count,
+                format="json",
+            ),
         )
         if canonical.get("error"):
             return {"success": False, "error": canonical["error"], "profile": profile_name}

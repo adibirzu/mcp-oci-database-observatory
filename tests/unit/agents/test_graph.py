@@ -3,14 +3,16 @@
 Tests verify graph structure, node execution, and state transitions.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 from src.agents.coordinator.graph import (
     CoordinatorState,
     LangGraphCoordinator,
     NodeType,
+    _format_tool_result_content,
 )
 
 
@@ -199,18 +201,20 @@ class TestAgentNode:
 class TestActionNode:
     """Tests for action node."""
 
-    def test_action_node_no_catalog(self):
+    @pytest.mark.asyncio
+    async def test_action_node_no_catalog(self):
         """Test action node with no tool catalog."""
         coordinator = LangGraphCoordinator()
         state = CoordinatorState(
             tool_calls=[{"id": "call_1", "name": "test__tool", "arguments": {}}]
         )
 
-        result = coordinator._action_node(state)
+        result = await coordinator._action_node(state)
 
         assert result["tool_results"] == []
 
-    def test_action_node_tool_not_found(self):
+    @pytest.mark.asyncio
+    async def test_action_node_tool_not_found(self):
         """Test action node when tool is not found."""
         mock_catalog = MagicMock()
         mock_catalog.get_tool.return_value = None
@@ -220,13 +224,14 @@ class TestActionNode:
             tool_calls=[{"id": "call_1", "name": "missing__tool", "arguments": {}}]
         )
 
-        result = coordinator._action_node(state)
+        result = await coordinator._action_node(state)
 
         assert len(result["tool_results"]) == 1
         assert result["tool_results"][0]["success"] is False
         assert "Tool not found" in result["tool_results"][0]["result"]
 
-    def test_action_node_clears_tool_calls(self):
+    @pytest.mark.asyncio
+    async def test_action_node_clears_tool_calls(self):
         """Test action node clears tool calls after processing."""
         mock_catalog = MagicMock()
         mock_catalog.get_tool.return_value = None
@@ -236,9 +241,55 @@ class TestActionNode:
             tool_calls=[{"id": "call_1", "name": "test__tool", "arguments": {}}]
         )
 
-        result = coordinator._action_node(state)
+        result = await coordinator._action_node(state)
 
         assert result["tool_calls"] == []
+
+    @pytest.mark.asyncio
+    async def test_action_node_normalizes_http_content_blocks(self):
+        """Test action node stores extracted text for MCP content blocks."""
+        mock_catalog = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.server_id = "oci-logan"
+        mock_tool.original_name = "oci_logan_get_summary"
+        mock_catalog.get_tool.return_value = mock_tool
+
+        mock_client = MagicMock()
+        mock_client.call_tool = AsyncMock(
+            return_value=[{"type": "text", "text": '{"rows":[{"count": 1}]}'}]
+        )
+        mock_catalog.registry.get_client.return_value = mock_client
+
+        coordinator = LangGraphCoordinator(tool_catalog=mock_catalog)
+        state = CoordinatorState(
+            tool_calls=[{"id": "call_1", "name": "logan__summary", "arguments": {}}]
+        )
+
+        result = await coordinator._action_node(state)
+
+        assert result["tool_results"][0]["success"] is True
+        assert result["tool_results"][0]["result"] == '{"rows":[{"count": 1}]}'
+
+
+class TestToolResultFormatting:
+    """Tests for tool-result normalization."""
+
+    def test_format_tool_result_content_prefers_text_blocks(self):
+        """Test tool result formatting extracts text payload from MCP content."""
+        result = _format_tool_result_content(
+            [
+                {"type": "text", "text": '{"hello":"world"}'},
+                {"type": "text", "text": "second block"},
+            ]
+        )
+
+        assert result == '{"hello":"world"}\nsecond block'
+
+    def test_format_tool_result_content_serializes_structured_content(self):
+        """Test structured content is rendered as JSON when no text is present."""
+        result = _format_tool_result_content({"structuredContent": {"score": 92, "status": "ok"}})
+
+        assert result == '{"score": 92, "status": "ok"}'
 
 
 class TestOutputNode:
@@ -362,6 +413,7 @@ class TestToolBindingFlow:
         mock_catalog.get_tool.return_value = mock_tool
 
         mock_client = MagicMock()
+        mock_client.call_tool = AsyncMock(return_value="1")
         mock_catalog.registry.get_client.return_value = mock_client
 
         coordinator = LangGraphCoordinator(

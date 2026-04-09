@@ -7,20 +7,68 @@ This module implements a StateGraph that:
 4. Returns final response
 """
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Annotated, Any, Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
 
 from src.core import get_logger
-from src.observability import create_span
 from src.mcp.tools.converter import ToolConverter
+from src.observability import create_span
 
 logger = get_logger("agents.coordinator.graph")
+
+
+def _format_tool_result_content(result: Any) -> str:
+    """Normalize MCP tool results into plain text or JSON for LLM consumption."""
+    if result is None:
+        return ""
+
+    if isinstance(result, str):
+        return result
+
+    if isinstance(result, bytes):
+        return result.decode("utf-8", errors="replace")
+
+    if hasattr(result, "model_dump") and callable(result.model_dump):
+        return _format_tool_result_content(result.model_dump())
+
+    if isinstance(result, dict):
+        content = result.get("content")
+        if content is not None:
+            normalized = _format_tool_result_content(content)
+            if normalized:
+                return normalized
+
+        structured_content = result.get("structuredContent")
+        if structured_content is not None:
+            return json.dumps(structured_content, ensure_ascii=True, default=str)
+
+        text = result.get("text")
+        if isinstance(text, str):
+            return text
+
+        return json.dumps(result, ensure_ascii=True, default=str)
+
+    if isinstance(result, list):
+        text_chunks = [
+            str(item.get("text"))
+            for item in result
+            if isinstance(item, dict)
+            and item.get("type") == "text"
+            and item.get("text") is not None
+        ]
+        if text_chunks:
+            return "\n".join(text_chunks)
+
+        return json.dumps(result, ensure_ascii=True, default=str)
+
+    return str(result)
 
 
 class NodeType(str, Enum):
@@ -45,9 +93,7 @@ class CoordinatorState:
         error: Any error that occurred
     """
 
-    messages: Annotated[Sequence[BaseMessage], add_messages] = field(
-        default_factory=list
-    )
+    messages: Annotated[Sequence[BaseMessage], add_messages] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_results: list[dict[str, Any]] = field(default_factory=list)
     iteration: int = 0
@@ -143,9 +189,7 @@ class LangGraphCoordinator:
             if not self.llm:
                 logger.warning("No LLM configured, returning empty response")
                 return {
-                    "messages": [
-                        AIMessage(content="No LLM configured for processing")
-                    ],
+                    "messages": [AIMessage(content="No LLM configured for processing")],
                     "tool_calls": [],
                 }
 
@@ -165,9 +209,7 @@ class LangGraphCoordinator:
                 response = self.llm.invoke(messages)
                 logger.debug(
                     "Agent response",
-                    has_tool_calls=bool(
-                        hasattr(response, "tool_calls") and response.tool_calls
-                    ),
+                    has_tool_calls=bool(hasattr(response, "tool_calls") and response.tool_calls),
                 )
 
                 # Extract tool calls if any
@@ -193,9 +235,7 @@ class LangGraphCoordinator:
                 logger.error("Agent invocation failed", error=str(e))
                 return {
                     "error": str(e),
-                    "messages": [
-                        AIMessage(content=f"Error processing request: {e}")
-                    ],
+                    "messages": [AIMessage(content=f"Error processing request: {e}")],
                     "tool_calls": [],
                 }
 
@@ -228,31 +268,37 @@ class LangGraphCoordinator:
                 try:
                     tool_def = self.tool_catalog.get_tool(tool_name)
                     if not tool_def:
-                        results.append({
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "result": f"Tool not found: {tool_name}",
-                            "success": False,
-                        })
+                        results.append(
+                            {
+                                "tool_call_id": tool_call_id,
+                                "tool_name": tool_name,
+                                "result": f"Tool not found: {tool_name}",
+                                "success": False,
+                            }
+                        )
                         continue
 
                     client = self.tool_catalog.registry.get_client(tool_def.server_id)
                     if not client:
-                        results.append({
-                            "tool_call_id": tool_call_id,
-                            "tool_name": tool_name,
-                            "result": f"Server not available: {tool_def.server_id}",
-                            "success": False,
-                        })
+                        results.append(
+                            {
+                                "tool_call_id": tool_call_id,
+                                "tool_name": tool_name,
+                                "result": f"Server not available: {tool_def.server_id}",
+                                "success": False,
+                            }
+                        )
                         continue
 
                     result = await client.call_tool(tool_def.original_name, arguments)
-                    results.append({
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "result": str(result),
-                        "success": True,
-                    })
+                    results.append(
+                        {
+                            "tool_call_id": tool_call_id,
+                            "tool_name": tool_name,
+                            "result": _format_tool_result_content(result),
+                            "success": True,
+                        }
+                    )
 
                 except Exception as e:
                     logger.error(
@@ -260,12 +306,14 @@ class LangGraphCoordinator:
                         tool=tool_name,
                         error=str(e),
                     )
-                    results.append({
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "result": str(e),
-                        "success": False,
-                    })
+                    results.append(
+                        {
+                            "tool_call_id": tool_call_id,
+                            "tool_name": tool_name,
+                            "result": str(e),
+                            "success": False,
+                        }
+                    )
 
             return {
                 "tool_results": results,
@@ -344,9 +392,7 @@ class LangGraphCoordinator:
             messages = result.get("messages", [])
             last_message = messages[-1] if messages else None
             content = (
-                last_message.content
-                if last_message and hasattr(last_message, "content")
-                else ""
+                last_message.content if last_message and hasattr(last_message, "content") else ""
             )
 
             return {
@@ -428,7 +474,7 @@ class LangGraphCoordinator:
 
         try:
             result = await client.call_tool(tool_def.original_name, arguments)
-            return str(result)
+            return _format_tool_result_content(result)
         except Exception as e:
             return f"Error executing {tool_name}: {e}"
 

@@ -47,7 +47,7 @@ async def main():
     # Step 2: Initialize MCP server
     print("\n🔧 Initializing MCP server...")
     from mcp.server.fastmcp import FastMCP
-    from src.mcp_server.tools import register_all_tools
+    from src.oci_database_observatory.tools import register_all_tools
 
     mcp = FastMCP(name="oci-database-observatory-test")
     register_all_tools(mcp)

@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     )
     oci_profile: str = Field(
         default="DEFAULT",
-        validation_alias=AliasChoices("OCI_CLI_PROFILE", "OCI_PROFILE"),
+        validation_alias=AliasChoices("OCI_CONFIG_PROFILE", "OCI_CLI_PROFILE", "OCI_PROFILE"),
     )
 
     # OCI Compartment

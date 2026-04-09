@@ -140,7 +140,8 @@ class TenancyManager:
         if name in self._profiles:
             self._active_profile = name
             # Also set environment variable for OCI SDK
-            os.environ["OCI_CLI_PROFILE"] = name
+            os.environ["OCI_CONFIG_PROFILE"] = name
+            os.environ["OCI_CLI_PROFILE"] = name  # backward compat
             return True
         return False
 
@@ -154,7 +155,7 @@ class TenancyManager:
             return self._profiles.get(self._active_profile)
 
         # Try to get from environment
-        env_profile = os.getenv("OCI_CLI_PROFILE", "DEFAULT")
+        env_profile = os.getenv("OCI_CONFIG_PROFILE") or os.getenv("OCI_CLI_PROFILE", "DEFAULT")
         if env_profile in self._profiles:
             self._active_profile = env_profile
             return self._profiles[env_profile]

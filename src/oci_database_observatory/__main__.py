@@ -1,6 +1,6 @@
 """OCI Database Observatory MCP Server entry point.
 
-Run with: python -m src.mcp_server
+Run with: python -m src.oci_database_observatory
 
 A modular, multi-tenancy MCP server for:
 - Oracle Database operations via SQLcl
@@ -92,7 +92,7 @@ init_tracing(component="mcp_executor")
 
 # Initialize OCI Logging
 logger.info("Initializing OCI Logging...")
-init_oci_logging(profile=os.getenv("OCI_CLI_PROFILE", "DEFAULT"))
+init_oci_logging(profile=os.getenv("OCI_CONFIG_PROFILE") or os.getenv("OCI_CLI_PROFILE", "DEFAULT"))
 
 # Register shutdown handlers
 def shutdown_observability():
@@ -119,7 +119,7 @@ logger.info("OCI Database Observatory MCP Server starting...")
 logger.info(f"ENV_FILE_LOADED: {_env_file_loaded or 'none found'}")
 logger.info(f"SQLCL_PATH: {os.getenv('SQLCL_PATH', 'not set')}")
 logger.info(f"OCI_CONFIG_FILE: {os.getenv('OCI_CONFIG_FILE', '~/.oci/config')}")
-logger.info(f"OCI_CLI_PROFILE: {os.getenv('OCI_CLI_PROFILE', 'DEFAULT')}")
+logger.info(f"OCI_CONFIG_PROFILE: {os.getenv('OCI_CONFIG_PROFILE') or os.getenv('OCI_CLI_PROFILE', 'DEFAULT')}")
 logger.info(f"OCI_COMPARTMENT_ID: {os.getenv('OCI_COMPARTMENT_ID', 'not set')[:50] + '...' if os.getenv('OCI_COMPARTMENT_ID') else 'not set'}")
 logger.info(f"OCI_DEFAULT_DBMGMT_COMPARTMENT_ID: {'set' if os.getenv('OCI_DEFAULT_DBMGMT_COMPARTMENT_ID') else 'not set'}")
 logger.info(f"OCI_PRODUCTION_DBMGMT_COMPARTMENT_ID: {'set' if os.getenv('OCI_PRODUCTION_DBMGMT_COMPARTMENT_ID') else 'not set'}")

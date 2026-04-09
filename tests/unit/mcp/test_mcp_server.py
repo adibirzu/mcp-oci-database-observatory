@@ -9,7 +9,7 @@ class TestMCPServerConfig:
 
     def test_tenancy_profile_dataclass(self):
         """Test TenancyProfile dataclass."""
-        from src.mcp_server.config import TenancyProfile
+        from src.oci_database_observatory.config import TenancyProfile
 
         profile = TenancyProfile(
             name="test",
@@ -23,7 +23,7 @@ class TestMCPServerConfig:
 
     def test_tenancy_profile_to_dict(self):
         """Test TenancyProfile.to_dict()."""
-        from src.mcp_server.config import TenancyProfile
+        from src.oci_database_observatory.config import TenancyProfile
 
         profile = TenancyProfile(
             name="test",
@@ -40,7 +40,7 @@ class TestMCPServerConfig:
 
     def test_tenancy_manager_init(self):
         """Test TenancyManager initialization."""
-        from src.mcp_server.config import TenancyManager
+        from src.oci_database_observatory.config import TenancyManager
 
         manager = TenancyManager(config_file="/tmp/test-oci-config")
         assert manager.config_file == "/tmp/test-oci-config"
@@ -53,7 +53,7 @@ class TestMCPServerCache:
 
     def test_cache_tier_values(self):
         """Test cache tier TTL values."""
-        from src.mcp_server.cache import CacheTier
+        from src.oci_database_observatory.cache import CacheTier
 
         assert CacheTier.STATIC.value == 3600  # 1 hour
         assert CacheTier.STABLE.value == 1800  # 30 min
@@ -63,7 +63,7 @@ class TestMCPServerCache:
 
     def test_tool_cache_tiers_mapping(self):
         """Test tool-to-tier mapping."""
-        from src.mcp_server.cache import TOOL_CACHE_TIERS, CacheTier
+        from src.oci_database_observatory.cache import TOOL_CACHE_TIERS, CacheTier
 
         # Static tools
         assert TOOL_CACHE_TIERS["list_oci_profiles"] == CacheTier.STATIC
@@ -88,7 +88,7 @@ class TestMCPServerCache:
     @pytest.mark.asyncio
     async def test_cache_set_get(self):
         """Test cache set and get operations."""
-        from src.mcp_server.cache import ResponseCache
+        from src.oci_database_observatory.cache import ResponseCache
 
         cache = ResponseCache()
 
@@ -102,7 +102,7 @@ class TestMCPServerCache:
     @pytest.mark.asyncio
     async def test_cache_miss(self):
         """Test cache miss returns None."""
-        from src.mcp_server.cache import ResponseCache
+        from src.oci_database_observatory.cache import ResponseCache
 
         cache = ResponseCache()
         result = await cache.get("nonexistent", {})
@@ -111,7 +111,7 @@ class TestMCPServerCache:
     @pytest.mark.asyncio
     async def test_cache_stats(self):
         """Test cache statistics."""
-        from src.mcp_server.cache import ResponseCache
+        from src.oci_database_observatory.cache import ResponseCache
 
         cache = ResponseCache()
 
@@ -131,7 +131,7 @@ class TestMCPServerClients:
 
     def test_oci_config_dataclass(self):
         """Test OCIConfig dataclass."""
-        from src.mcp_server.clients import OCIConfig
+        from src.oci_database_observatory.clients import OCIConfig
 
         config = OCIConfig(
             config={"tenancy": "test"},
@@ -146,7 +146,7 @@ class TestMCPServerClients:
 
     def test_oci_client_manager_init(self):
         """Test OCIClientManager initialization."""
-        from src.mcp_server.clients import OCIClientManager
+        from src.oci_database_observatory.clients import OCIClientManager
 
         manager = OCIClientManager()
         assert manager._configs == {}
@@ -159,7 +159,7 @@ class TestToolModules:
 
     def test_sqlcl_acl_patterns(self):
         """Test ACL error patterns are defined."""
-        from src.mcp_server.tools.sqlcl import ACL_ERROR_PATTERNS
+        from src.oci_database_observatory.tools.sqlcl import ACL_ERROR_PATTERNS
 
         assert "ORA-12170" in ACL_ERROR_PATTERNS  # TNS:Connect timeout
         assert "ORA-12541" in ACL_ERROR_PATTERNS  # TNS:no listener
@@ -167,7 +167,7 @@ class TestToolModules:
 
     def test_opsi_region_map(self):
         """Test OPSI region code mapping."""
-        from src.mcp_server.tools.opsi import REGION_MAP, extract_region_from_ocid
+        from src.oci_database_observatory.tools.opsi import REGION_MAP, extract_region_from_ocid
 
         assert REGION_MAP["phx"] == "us-phoenix-1"
         assert REGION_MAP["lhr"] == "uk-london-1"
@@ -179,7 +179,7 @@ class TestToolModules:
 
     def test_extract_region_invalid_ocid(self):
         """Test region extraction with invalid OCID."""
-        from src.mcp_server.tools.opsi import extract_region_from_ocid
+        from src.oci_database_observatory.tools.opsi import extract_region_from_ocid
 
         assert extract_region_from_ocid("") is None
         assert extract_region_from_ocid("invalid") is None
@@ -191,13 +191,13 @@ class TestToolRegistration:
 
     def test_register_all_tools_function_exists(self):
         """Test register_all_tools function exists."""
-        from src.mcp_server.tools import register_all_tools
+        from src.oci_database_observatory.tools import register_all_tools
 
         assert callable(register_all_tools)
 
     def test_individual_register_functions_exist(self):
         """Test each module has register_tools function."""
-        from src.mcp_server.tools import sqlcl, opsi, logan, tenancy
+        from src.oci_database_observatory.tools import sqlcl, opsi, logan, tenancy
 
         assert callable(sqlcl.register_tools)
         assert callable(opsi.register_tools)
@@ -210,7 +210,7 @@ class TestPackageExports:
 
     def test_exports_available(self):
         """Test all exports are importable."""
-        from src.mcp_server import (
+        from src.oci_database_observatory import (
             TenancyProfile,
             TenancyManager,
             get_tenancy_manager,
@@ -235,6 +235,6 @@ class TestPackageExports:
 
     def test_version(self):
         """Test version is defined."""
-        from src.mcp_server import __version__
+        from src.oci_database_observatory import __version__
 
         assert __version__ == "0.2.0"

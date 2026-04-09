@@ -6,7 +6,7 @@ Extensible for additional compliance frameworks.
 """
 
 import os
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import httpx
 
@@ -26,7 +26,9 @@ def register_tools(mcp: "FastMCP") -> None:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(f"{SCANNER_URL}{path}")
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                data["success"] = "error" not in data
+                return data
         except Exception as e:
             return {"success": False, "error": f"Scanner unreachable: {e}"}
 
@@ -49,16 +51,19 @@ def register_tools(mcp: "FastMCP") -> None:
         Returns:
             Compliance summary with score and category breakdown
         """
+
         async def _fetch():
             data = await _scanner_get("/api/summary")
-            if "error" in data and "unreachable" in str(data.get("error", "")):
+            if not data.get("success"):
                 return data
             data["success"] = True
             data["framework"] = "CIS OCI Foundation Benchmark 3.0.0"
             return data
 
         return await cached_call(
-            "get_compliance_latest", {}, _fetch,
+            "get_compliance_latest",
+            {},
+            _fetch,
         )
 
     @mcp.tool(
@@ -83,8 +88,8 @@ def register_tools(mcp: "FastMCP") -> None:
             Detailed findings per category
         """
         data = await _scanner_get("/api/summary")
-        if "error" in data:
-            return {"success": False, "error": data["error"]}
+        if not data.get("success"):
+            return {"success": False, "error": data.get("error", "Scanner returned an error")}
 
         by_cat = data.get("by_category", {})
         findings = []
@@ -92,13 +97,15 @@ def register_tools(mcp: "FastMCP") -> None:
             if category and category.lower() not in cat.lower():
                 continue
             total = counts["pass"] + counts["fail"]
-            findings.append({
-                "category": cat,
-                "passed": counts["pass"],
-                "failed": counts["fail"],
-                "total": total,
-                "compliance_pct": round(counts["pass"] / total * 100) if total else 0,
-            })
+            findings.append(
+                {
+                    "category": cat,
+                    "passed": counts["pass"],
+                    "failed": counts["fail"],
+                    "total": total,
+                    "compliance_pct": round(counts["pass"] / total * 100) if total else 0,
+                }
+            )
 
         findings.sort(key=lambda x: x["compliance_pct"])
         return {
@@ -153,11 +160,16 @@ def register_tools(mcp: "FastMCP") -> None:
         Returns:
             List of past scans with dates and scores
         """
+
         async def _fetch():
             data = await _scanner_get("/api/history")
+            if not data.get("success"):
+                return data
             data["success"] = True
             return data
 
         return await cached_call(
-            "get_compliance_history", {}, _fetch,
+            "get_compliance_history",
+            {},
+            _fetch,
         )

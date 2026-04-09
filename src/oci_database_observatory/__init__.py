@@ -16,7 +16,7 @@ Tool Categories:
 - Tenancy: list_oci_profiles, set_active_profile, list_compartments
 
 Usage:
-    python -m src.mcp_server
+    python -m src.oci_database_observatory
 """
 
 __version__ = "0.2.0"
