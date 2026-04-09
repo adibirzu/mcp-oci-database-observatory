@@ -70,7 +70,7 @@ def register_tools(mcp: "FastMCP") -> None:
         mcp: FastMCP server instance
     """
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     async def list_managed_databases(
         compartment_id: Optional[str] = None,
         profile: str = "DEFAULT",
@@ -137,7 +137,7 @@ def register_tools(mcp: "FastMCP") -> None:
                 "compartment_id": comp_id,
             })
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     async def get_managed_database(
         managed_database_id: str,
         profile: str = "DEFAULT",
@@ -196,7 +196,7 @@ def register_tools(mcp: "FastMCP") -> None:
                 "managed_database_id": managed_database_id,
             })
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     async def list_awr_db_snapshots(
         managed_database_id: str,
         profile: str = "DEFAULT",
@@ -283,7 +283,7 @@ def register_tools(mcp: "FastMCP") -> None:
                 "managed_database_id": managed_database_id,
             })
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     async def get_awr_db_report(
         managed_database_id: str,
         begin_snapshot_id: int,
@@ -405,7 +405,7 @@ def register_tools(mcp: "FastMCP") -> None:
                 },
             })
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     async def get_awr_db_report_auto(
         managed_database_id: str,
         profile: str = "DEFAULT",
@@ -559,7 +559,7 @@ def register_tools(mcp: "FastMCP") -> None:
                 "managed_database_id": managed_database_id,
             })
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     async def get_database_fleet_health(
         compartment_id: Optional[str] = None,
         profile: str = "DEFAULT",
@@ -630,7 +630,7 @@ def register_tools(mcp: "FastMCP") -> None:
                 "compartment_id": comp_id,
             })
 
-    @mcp.tool()
+    @mcp.tool(annotations={"readOnlyHint": True, "openWorldHint": True})
     async def search_managed_databases(
         name_contains: str,
         compartment_id: Optional[str] = None,
